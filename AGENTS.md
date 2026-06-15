@@ -1,8 +1,94 @@
-# UniLab Agent Principles
+# CLAUDE.md
 
-**Always use `uv run`, not python**.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-UniLab 是一个 **高性能、模块化、contract 驱动** 的 RL infrastructure 仓库。
+## Commands
+
+**Always use `uv run`, never bare `python`.**
+
+| Task | Command |
+|------|---------|
+| Sync deps | `uv sync` (append `--extra motrix` for Motrix backend) |
+| Setup (sync + shell completion) | `make setup` |
+| Format + lint | `make format` (ruff format + ruff check --fix) |
+| Type check | `make type` (mypy + pyright) |
+| Full check | `make check` (format + type) |
+| Run tests (fast) | `make test` (`pytest -m "not slow"`) |
+| Run tests + coverage | `make test-cov` |
+| Run slow tests | `make test-slow` (`pytest -m "slow" -v`) |
+| Full CI gate | `make test-all` (check + test-cov) |
+| Run a single test | `uv run pytest tests/path/to/test_file.py::test_name -v` |
+| Run a test file | `uv run pytest tests/path/to/test_file.py -v` |
+| Train (CLI) | `uv run train --algo ppo --task g1_walk_flat --sim mujoco` |
+| Eval (CLI) | `uv run eval --algo ppo --task g1_walk_flat --sim mujoco --load-run <run_dir>` |
+| Demo (CLI) | `uv run demo <demo_name>` |
+| ROCm sync | `make sync-rocm` |
+| Clean artifacts | `make clean` |
+
+## Architecture
+
+UniLab is a **multi-backend, multi-algorithm** RL training infrastructure. It supports PPO-family (RSL-RL, MLX, APPO, HIM, HORA) and off-policy (SAC, TD3, FlashSAC) algorithms across MuJoCo and Motrix physics backends.
+
+### Layer stack
+
+```
+CLI (cli.py) ──► scripts/train_*.py ──► training/ (run, experiment, sim2sim)
+                                            │
+     ┌──────────────────────────────────────┤
+     ▼                                      ▼
+  algos/{torch,mlx}/                     envs/{locomotion,motion_tracking,manipulation}/
+  (learners, runners, networks)          (task envs: NpEnv subclasses)
+                                            │
+                                            ▼
+                                         base/backend/{mujoco,motrix}/
+                                         (SimBackend implementations)
+```
+
+- **`scripts/`**: thin entrypoints — assemble Hydra config + call training helpers. No business logic.
+- **`training/`**: shared orchestration — run directory resolution, experiment tracking, sim2sim contract enforcement, reward building.
+- **`algos/`**: algorithm implementations. Each algorithm has a runner (env loop), learner (gradient steps), and optional staged pipeline for async algorithms.
+- **`envs/`**: task environments (locomotion, motion tracking, manipulation). Each env extends `NpEnv` and uses `SimBackend` for physics — never calls backend subclass methods directly.
+- **`base/`**: abstract contracts — `NpEnv`, `SimBackend`, `EnvCfg`, registry.
+- **`ipc/`**: inter-process communication — shared buffers, weight sync, async runner protocol.
+
+### Key design patterns
+
+**Config first (Hydra + registry).** Training is launched via `scripts/train_*.py` + Hydra `@hydra.main`. The config tree at `conf/<algo>/` composes: algorithm defaults (`config.yaml`) → task owner YAML (`task/<task>/<backend>.yaml`). Backend selection is `task=<task>/<backend>` — `training.sim_backend` is an identity field in the owner YAML, not a standalone override.
+
+**Registry system.** Environments are registered via decorators at import time:
+
+```python
+@envcfg("g1_walk_flat")        # register config class
+@dataclass
+class G1WalkFlatCfg(LocomotionEnvCfg): ...
+
+@env("g1_walk_flat", "mujoco")  # register env class for a backend
+class G1WalkFlatEnv(LocomotionEnv): ...
+```
+
+Registry packages declare `__unilab_registry_modules__` to list their bootstrap modules. `ensure_registries()` imports these at startup.
+
+**Env contract (`NpEnv`).** `reset()` returns `(obs_dict, info_dict)`. `step(action)` returns `NpEnvState` (obs, reward, terminated, truncated, info). `obs` must always be a `dict[str, np.ndarray]`. `obs_groups_spec` controls which obs groups are active and drives wrapper/learner dimension setup.
+
+**Backend isolation.** Env code only accesses methods declared on `SimBackend` (in `base/backend/base.py`). If a method only exists on `MuJoCoBackend` or `MotrixBackend`, it must first be added to `SimBackend` (can raise `NotImplementedError`). Never call backend subclass methods or use `getattr`/`hasattr` to probe backend capabilities from env code.
+
+### Algorithm landscape
+
+| Algorithm | Script | Key characteristics |
+|-----------|--------|---------------------|
+| PPO (RSL-RL) | `train_rsl_rl.py` | Sync, RSL-RL based, MuJoCo-only |
+| PPO (MLX) | `train_mlx_ppo.py` | Apple Silicon, macOS-only |
+| APPO | `train_appo.py` | Async, decoupled collector/learner via IPC |
+| HIM PPO | `train_him_ppo.py` | Hybrid inverse model for privileged-to-proprio distillation |
+| HORA | `train_hora_distill.py` | Hybrid off-policy RL with action distillation |
+| SAC / TD3 | `train_offpolicy.py` | Off-policy, replay-buffer based, multi-GPU support |
+| FlashSAC | `train_offpolicy.py` | SAC with Flash Attention, high-throughput |
+
+MuJoCo is the default backend. Motrix requires `uv sync --extra motrix` and uses `motrixsim-core`.
+
+### Test layout
+
+Tests mirror `src/unilab/` structure. Slow tests (tagged `@pytest.mark.slow`) cover training smoke tests, long-running integrations, and backend matrices — skipped in `make test`, run with `make test-slow`. Config tests validate the Hydra composition tree. NaN injection tests (`tests/nan_injection/`) use spawn-based subprocess testing for numerical stability.
 
 ## Core Principles
 
