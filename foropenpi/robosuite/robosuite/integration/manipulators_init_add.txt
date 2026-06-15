@@ -1,0 +1,2 @@
+# Add to robosuite/robosuite/models/robots/manipulators/__init__.py
+from .rangerboxcr10lidar_robot import RangerboxCR10Lidar

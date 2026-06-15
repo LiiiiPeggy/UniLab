@@ -1,0 +1,16 @@
+# RangerboxCR10Lidar — foropenpi file manifest
+# Generated from Robocasa ranger branch (robot model only, no kitchen scene assets)
+
+robosuite/robosuite/models/assets/robots/rangerboxcr10lidar/robot.xml
+robosuite/robosuite/models/assets/robots/rangerboxcr10lidar/meshes/*.obj (26 files)
+robosuite/robosuite/models/robots/manipulators/rangerboxcr10lidar_robot.py
+robosuite/robosuite/models/grippers/embedded_ag95_gripper.py
+robosuite/robosuite/controllers/config/robots/default_rangerboxcr10lidar.json
+tools/convert_ranger_urdf_to_mjcf.py
+rangerboxcr10lidar_description/urdf/rangercr10lidar.urdf
+
+NOT included (install separately):
+- robocasa kitchen assets (download_kitchen_assets)
+- rangerboxcr10lidar_description/meshes/*.STL (use Robocasa repo or robot vendor package)
+- robocasa env patches (see INTEGRATION.md §4)
+- openpi training configs / datasets

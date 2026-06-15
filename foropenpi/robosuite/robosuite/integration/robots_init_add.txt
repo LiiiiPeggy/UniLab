@@ -1,0 +1,2 @@
+# Add to robosuite/robosuite/robots/__init__.py ROBOT_CLASS_MAPPING:
+    "RangerboxCR10Lidar": WheeledRobot,

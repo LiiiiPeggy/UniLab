@@ -1,0 +1,7 @@
+# Add to robosuite/robosuite/models/grippers/__init__.py
+
+# import:
+from .embedded_ag95_gripper import EmbeddedAG95Gripper
+
+# GRIPPER_MAPPING entry:
+    "EmbeddedAG95": EmbeddedAG95Gripper,
