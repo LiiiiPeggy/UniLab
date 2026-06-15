@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+    <node name="rviz1" pkg="rviz" type="rviz" args="-d $(find ranger_bringup)/rviz/slam.rviz" />
+</launch>
