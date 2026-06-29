@@ -10,6 +10,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |------|---------|
 | Sync deps | `uv sync` (append `--extra motrix` for Motrix backend) |
 | Setup (sync + shell completion) | `make setup` |
+| Setup Motrix (Quick Demo) | `make setup-motrix` (`uv sync --extra motrix` + shell completion) |
+| ROCm sync | `make sync-rocm` (Linux AMD / ROCm ≥ 7.1) |
+| Intel GPU sync | `make sync-xpu` (Intel Arc / Xe) |
 | Format + lint | `make format` (ruff format + ruff check --fix) |
 | Type check | `make type` (mypy + pyright) |
 | Full check | `make check` (format + type) |
@@ -22,8 +25,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Train (CLI) | `uv run train --algo ppo --task g1_walk_flat --sim mujoco` |
 | Eval (CLI) | `uv run eval --algo ppo --task g1_walk_flat --sim mujoco --load-run <run_dir>` |
 | Demo (CLI) | `uv run demo <demo_name>` |
-| ROCm sync | `make sync-rocm` |
+| Check docs | `uv run pytest tests/scripts/test_check_docs.py -q` |
+| Check repo hygiene | `uv run pytest tests/scripts/test_repo_hygiene.py -q` |
 | Clean artifacts | `make clean` |
+
+Available demos: `teaser`, `dance`, `wallflip`, `boxtracking`, `locomani`, `inhandgrasp`, `sharpa_appo_student`.
+
+For mainland China users, set `HF_ENDPOINT=https://hf-mirror.com` before running demos that download checkpoints.
 
 ## Architecture
 
@@ -74,15 +82,17 @@ Registry packages declare `__unilab_registry_modules__` to list their bootstrap 
 
 ### Algorithm landscape
 
+The unified CLI (`uv run train --algo <algo>`) supports: `ppo`, `mlx_ppo`, `appo`, `sac`, `td3`, `flashsac`. APPO supports `--profile hora` for the HORA profile. The following algorithms require running their scripts directly (no CLI support):
+
 | Algorithm | Script | Key characteristics |
 |-----------|--------|---------------------|
-| PPO (RSL-RL) | `train_rsl_rl.py` | Sync, RSL-RL based, MuJoCo-only |
-| PPO (MLX) | `train_mlx_ppo.py` | Apple Silicon, macOS-only |
-| APPO | `train_appo.py` | Async, decoupled collector/learner via IPC |
-| HIM PPO | `train_him_ppo.py` | Hybrid inverse model for privileged-to-proprio distillation |
-| HORA | `train_hora_distill.py` | Hybrid off-policy RL with action distillation |
-| SAC / TD3 | `train_offpolicy.py` | Off-policy, replay-buffer based, multi-GPU support |
-| FlashSAC | `train_offpolicy.py` | SAC with Flash Attention, high-throughput |
+| PPO (RSL-RL) | `scripts/train_rsl_rl.py` | Sync, RSL-RL based, MuJoCo-only |
+| PPO (MLX) | `scripts/train_mlx_ppo.py` | Apple Silicon, macOS-only |
+| APPO | `scripts/train_appo.py` | Async, decoupled collector/learner via IPC |
+| HIM PPO | `scripts/train_him_ppo.py` | Hybrid inverse model for privileged-to-proprio distillation; script only |
+| HORA | `scripts/train_hora_distill.py` | Hybrid off-policy RL with action distillation; script only |
+| SAC / TD3 | `scripts/train_offpolicy.py` | Off-policy, replay-buffer based, multi-GPU support |
+| FlashSAC | `scripts/train_offpolicy.py` | SAC with Flash Attention, high-throughput |
 
 MuJoCo is the default backend. Motrix requires `uv sync --extra motrix` and uses `motrixsim-core`.
 
@@ -108,9 +118,23 @@ Tests mirror `src/unilab/` structure. Slow tests (tagged `@pytest.mark.slow`) co
 | Config / Reward | reward 通过 Hydra 注入；后端切换必须通过 `task=<task>/<backend>` 选择 owner YAML，`training.sim_backend` 只是 owner YAML 的身份字段，不能单独 override 来切后端。算法超参数直接走 YAML compose，不经 Python 层解释。 |
 | Backend | backend-specific 逻辑留在 backend / env 适配层，不向训练脚本扩散。env 层只能调用 `SimBackend`（`base.py`）中已声明的方法；若某方法只在 MuJoCo 或 Motrix 中存在，必须先将其加入 `SimBackend` 抽象接口（可抛 `NotImplementedError`），禁止直接在 env 里调用 backend 子类的私有方法（即"功能泄漏/feature leakage"）。新增 backend 专有能力时，需同步更新 `SimBackend`。 |
 | Asset / Metadata | `ASSETS_ROOT_PATH`、`model_file`、XML / asset 元数据只允许在 init / materialization / cache 等低频路径访问；`step/reset/domain randomization` 等热路径不得解析 asset 或基于 asset 元数据做运行时分支。 |
-| Asset / XML structure | `<keyframe>` 必须放在 task-level XML（`scene_*.xml` 或 `locomotion_task.xml` 等 fragment），**禁止放进 robot.xml**。robot.xml 是纯机器人描述（body / joint / actuator / sensor），跟 task / 场景无关；keyframe 是 task 起始姿态，属于场景或 task 资源。motrix 后端需要 keyframe 时通过 `scene.fragment_files` 引用 fragment XML。 |
+| Asset / XML structure | `<keyframe>` 必须放在 task-level XML（`scene_*.xml` 或 `locomotion_task.xml` 等 fragment），**禁止放进 robot body XML**（如 `g1.xml`、`go1.xml`）。robot body XML 是纯机器人描述（body / joint / actuator / sensor），跟 task / 场景无关；keyframe 是 task 起始姿态，属于场景或 task 资源。motrix 后端需要 keyframe 时通过 `scene.fragment_files` 引用 fragment XML。 |
 | Async | 不绕开 runner lifecycle，也不另起 collector / learner 同步协议。 |
 | Sim2Sim 契约 | 跨后端 play 时，影响策略 I/O / 网络结构的字段必须跨后端一致；不一致即 `CrossBackendIncompatibleError`。详见下方 Sim2Sim 章节。 |
+
+## Commit Conventions
+
+Use Conventional Commits (from [CONTRIBUTING.md](CONTRIBUTING.md)):
+
+- `feat:` new feature
+- `fix:` bug fix
+- `docs:` documentation update
+- `style:` formatting only, no logic change
+- `refactor:` code refactor
+- `test:` test-related change
+- `chore:` build or tooling
+
+Do not add new owner logic under `src/unilab/utils/`. Current files there are transition shims scheduled for removal in 0.2.0.
 
 ## Sim2Sim 跨后端配置契约
 
