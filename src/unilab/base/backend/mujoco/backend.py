@@ -1325,6 +1325,55 @@ class MuJoCoBackend(SimBackend):
         kd = np.asarray(-self._model.actuator_biasprm[:, 2], dtype=np.float64).copy()
         return kp, kd
 
+    def set_root_planar_velocity(
+        self,
+        lin_vel_xy: np.ndarray,
+        yaw_rate: np.ndarray,
+        *,
+        preserve_uncontrolled: bool = True,
+    ) -> None:
+        """Write planar velocity to freejoint qvel (vx, vy, wz only)."""
+        _np = np
+        qvel = self._data.qvel
+        if qvel.ndim != 2:
+            raise RuntimeError("set_root_planar_velocity requires batched qvel (num_envs, nv)")
+        if preserve_uncontrolled:
+            qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
+            qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
+            qvel[:, 5] = _np.asarray(yaw_rate, dtype=_np.float64)
+            # qvel[:, 2] (vz), qvel[:, 3] (wx), qvel[:, 4] (wy) — left unchanged
+        else:
+            qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
+            qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
+            qvel[:, 2] = 0.0
+            qvel[:, 3] = 0.0
+            qvel[:, 4] = 0.0
+            qvel[:, 5] = _np.asarray(yaw_rate, dtype=_np.float64)
+
+    def set_joint_qpos(self, names: Sequence[str], values: np.ndarray) -> None:
+        """Set qpos for named joints (wheel/steering visualization)."""
+        _np = np
+        _mujoco = mujoco
+        for i, name in enumerate(names):
+            jid = _mujoco.mj_name2id(self._model, _mujoco.mjtObj.mjOBJ_JOINT, name)
+            if jid < 0:
+                raise ValueError(f"Joint {name!r} not found in MuJoCo model")
+            adr = int(self._model.jnt_qposadr[jid]) - self._root_qpos_dim
+            self._data.qpos[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
+
+    def set_joint_qvel(self, names: Sequence[str], values: np.ndarray) -> None:
+        """Set qvel for named joints (wheel/steering visualization)."""
+        _np = np
+        _mujoco = mujoco
+        for i, name in enumerate(names):
+            jid = _mujoco.mj_name2id(self._model, _mujoco.mjtObj.mjOBJ_JOINT, name)
+            if jid < 0:
+                raise ValueError(f"Joint {name!r} not found in MuJoCo model")
+            adr = int(self._model.jnt_dofadr[jid]) - self._root_qvel_dim
+            self._data.qvel[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
+
+    # ------------------------------------------------------------------ #
+
     def _apply_position_actuator_gains_to_model(
         self,
         model,

@@ -425,6 +425,56 @@ class SimBackend(abc.ABC):
         )
 
     # ------------------------------------------------------------------ #
+    # Root planar velocity                                                 #
+    # ------------------------------------------------------------------ #
+
+    def set_root_planar_velocity(
+        self,
+        lin_vel_xy: np.ndarray,
+        yaw_rate: np.ndarray,
+        *,
+        preserve_uncontrolled: bool = True,
+    ) -> None:
+        """Write planar velocity to the root freejoint qvel.
+
+        Only vx, vy, and wz (yaw rate) are written.  When
+        ``preserve_uncontrolled`` is True (the default), vz, wx, and wy
+        are left unchanged so that height / roll / pitch dynamics are
+        preserved across steps.
+
+        Args:
+            lin_vel_xy: ``(num_envs, 2)`` float64 array — vx, vy in world frame.
+            yaw_rate: ``(num_envs,)`` float64 array — angular velocity around z.
+            preserve_uncontrolled: if True, read current qvel and only
+                overwrite the planar components.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_root_planar_velocity"
+        )
+
+    def set_joint_qpos(self, names: Sequence[str], values: np.ndarray) -> None:
+        """Set qpos for named joints (wheel / steering visualization).
+
+        Args:
+            names: Joint names (e.g. ``["fr_steering_joint", ...]``).
+            values: ``(num_envs, len(names))`` float64 array.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_joint_qpos"
+        )
+
+    def set_joint_qvel(self, names: Sequence[str], values: np.ndarray) -> None:
+        """Set qvel for named joints (wheel / steering visualization).
+
+        Args:
+            names: Joint names (e.g. ``["fr_wheel_joint", ...]``).
+            values: ``(num_envs, len(names))`` float64 array.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support set_joint_qvel"
+        )
+
+    # ------------------------------------------------------------------ #
     # Base kinematics                                                      #
     # ------------------------------------------------------------------ #
 
