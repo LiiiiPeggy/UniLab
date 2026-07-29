@@ -108,12 +108,12 @@ class RangerBoxNoiseConfig(_Go2ArmNoiseConfig):
 
 @dataclass
 class RangerBoxControlConfig(ControlConfig):
-    arm_action_scale: float = 0.03
-    arm_kp: tuple[float, ...] = (40.0, 44.0, 38.0, 20.0, 20.0, 20.0)
-    arm_kd: tuple[float, ...] = (2.0, 2.2, 1.9, 1.0, 1.0, 1.0)
+    arm_action_scale: float = 0.01
+    arm_kp: tuple[float, ...] = (10.0, 11.0, 9.5, 5.0, 5.0, 5.0)
+    arm_kd: tuple[float, ...] = (5.0, 5.5, 4.8, 2.5, 2.5, 2.5)
     gripper_kp: float = 500.0
     gripper_kd: float = 10.0
-    arm_max_delta_per_step: float = 0.1
+    arm_max_delta_per_step: float = 0.05
 
 
 # ══════════════════════════════════════════════════════════════════════════
