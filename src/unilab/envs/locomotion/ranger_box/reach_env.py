@@ -668,7 +668,15 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         reward = self._compute_reward(ctx)
         obs = self._compute_obs(state.info, linvel, gyro, gravity, arm_pos, arm_vel,
                                 ee_local_pos, self.armbase_ee_goal, add_noise=True)
-        return state.replace(obs=obs, reward=reward, terminated=terminated)
+        # NaN guard: physics instability can produce NaN obs; zero them out
+        for k in obs:
+            obs[k] = np.nan_to_num(obs[k], copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        # Also terminate envs with NaN in arm pos (physics explosion)
+        nan_terminated = np.any(np.isnan(arm_pos), axis=1)
+        return state.replace(
+            obs=obs, reward=reward,
+            terminated=np.logical_or(terminated, nan_terminated),
+        )
 
     # ── Reward ──────────────────────────────────────────────────────
 
