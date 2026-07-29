@@ -528,14 +528,25 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_delta = np.clip(arm_delta, -max_delta, max_delta)
         arm_ctrl = arm_pos + arm_delta
 
+        # Set arm joints kinematically (direct qpos write) to bypass
+        # position-actuator instability with freejoint base.
+        arm_ctrl_clipped = np.clip(arm_ctrl, self._ctrl_low[:6], self._ctrl_high[:6])
+        self._backend.set_joint_qpos(
+            list(self._cfg.asset.arm_joint_names), arm_ctrl_clipped.astype(np.float64)
+        )
+        # Zero arm joint velocities so physics doesn't drift them
+        self._backend.set_joint_qvel(
+            list(self._cfg.asset.arm_joint_names),
+            np.zeros((actions.shape[0], 6), dtype=np.float64),
+        )
+
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
-        ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
-        ctrl_clipped = np.clip(ctrl, self._ctrl_low, self._ctrl_high).astype(get_global_dtype())
+        ctrl = np.concatenate([arm_ctrl_clipped, grip_ctrl], axis=1)
 
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
         self._base_controller.apply_velocity()
 
-        return ctrl_clipped
+        return ctrl.astype(get_global_dtype())
 
     # ── Observation ─────────────────────────────────────────────────
 
