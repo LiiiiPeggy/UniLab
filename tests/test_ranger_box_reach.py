@@ -125,6 +125,12 @@ class TestBaseVelocityController:
             def set_joint_qvel(self, names, values): pass
             def get_sensor_data(self, name):
                 return np.tile([1.0, 0.0, 0.0, 0.0], (4, 1))
+            def get_keyframe_qpos(self, name):
+                return np.array([0.0, 0.0, 0.278, 1.0, 0.0, 0.0, 0.0])
+            @property
+            def _qpos_view(self):
+                return self.__dict__.setdefault("_qpos_view_val",
+                    np.zeros((4, 7)))
 
         cfg = BaseVelocityControllerConfig()
         return BaseVelocityController(cfg, 0.02, _MockBackend(), RangerBoxAsset(), 4)

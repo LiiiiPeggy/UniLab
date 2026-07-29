@@ -1339,18 +1339,13 @@ class MuJoCoBackend(SimBackend):
             raise RuntimeError(
                 "set_root_planar_velocity requires batched qvel (num_envs, nv)"
             )
-        if preserve_uncontrolled:
-            qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
-            qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
-            qvel[:, 5] = _np.asarray(yaw_rate, dtype=_np.float64)
-            # qvel[:, 2] (vz), qvel[:, 3] (wx), qvel[:, 4] (wy) — left unchanged
-        else:
-            qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
-            qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
-            qvel[:, 2] = 0.0
-            qvel[:, 3] = 0.0
-            qvel[:, 4] = 0.0
-            qvel[:, 5] = _np.asarray(yaw_rate, dtype=_np.float64)
+        # SE(2) planar lock: always zero vz/wx/wy to prevent gravity sink
+        qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
+        qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
+        qvel[:, 2] = 0.0  # vz
+        qvel[:, 3] = 0.0  # wx
+        qvel[:, 4] = 0.0  # wy
+        qvel[:, 5] = _np.asarray(yaw_rate, dtype=_np.float64)
 
     def set_joint_qpos(self, names: Sequence[str], values: np.ndarray) -> None:
         """Set qpos for named joints (wheel/steering visualization)."""

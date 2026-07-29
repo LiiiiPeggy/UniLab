@@ -21,7 +21,7 @@ algo:
     entropy_coef: 1.0e-3
     num_mini_batches: 4
 
-reward_config:
+reward:
   scales:
     ee_distance: 4.0
     ee_distance_l2: -1.0
@@ -47,8 +47,8 @@ env:
   control_config:
     arm_action_scale: 0.03
     simulate_action_latency: false
-    arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
-    arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
+    arm_kp: [40.0, 44.0, 38.0, 20.0, 20.0, 20.0]
+    arm_kd: [2.0, 2.2, 1.9, 1.0, 1.0, 1.0]
     gripper_kp: 500.0
     gripper_kd: 10.0
   noise_config:
@@ -70,21 +70,8 @@ env:
     sphere_l_range: [0.20, 0.50]
     sphere_phi_range: [-1.20, 1.00]
     sphere_theta_range: [-2.00, 2.00]
-    reachable_fraction: 0.30
-    extended_l_range: [0.50, 1.20]
-    extended_fraction: 0.70
     traj_time_range: [1.0, 3.0]
     hold_time_range: [0.5, 2.0]
-    collision_upper_limits: [0.30, 0.15, -0.10]
-    collision_lower_limits: [-0.20, -0.15, -0.50]
-    underground_limit: -0.50
-    num_collision_check_samples: 10
-    num_resample_attempts: 10
-    default_orn_roll: 1.5708
-    arm_induced_pitch: 0.0
-    delta_orn_r: [0.0, 0.0]
-    delta_orn_p: [0.0, 0.0]
-    delta_orn_y: [0.0, 0.0]
     init_ee_cart: [0.30, 0.0, 0.30]
   base_velocity_controller:
     max_lin_vel: 1.5

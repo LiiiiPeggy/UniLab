@@ -64,6 +64,10 @@ class BaseVelocityController:
         self.latency_steps = np.zeros(num_envs, dtype=np.int32)
         self.latency_write_ptr = np.zeros(num_envs, dtype=np.int32)
 
+        # Cache initial base z height for SE(2) planar lock
+        init_qpos = backend.get_keyframe_qpos("home")
+        self._init_base_z = float(init_qpos[2])  # z is index 2 in qpos
+
         # Pre-compute clip arrays
         self._max_vel_arr = np.array(
             [cfg.max_lin_vel, cfg.max_lin_vel, cfg.max_ang_vel], dtype=np.float64
@@ -161,3 +165,7 @@ class BaseVelocityController:
         self._backend.set_root_planar_velocity(
             v_world[:, :2], w_world[:, 2], preserve_uncontrolled=True
         )
+
+        # SE(2) lock: reset z position to initial height to prevent sink
+        # qpos layout: [x, y, z, qw, qx, qy, qz, ...]
+        self._backend._qpos_view[:, 2] = self._init_base_z

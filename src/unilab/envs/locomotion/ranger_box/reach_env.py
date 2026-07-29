@@ -109,10 +109,11 @@ class RangerBoxNoiseConfig(_Go2ArmNoiseConfig):
 @dataclass
 class RangerBoxControlConfig(ControlConfig):
     arm_action_scale: float = 0.03
-    arm_kp: tuple[float, ...] = (100.0, 110.0, 95.0, 50.0, 50.0, 50.0)
-    arm_kd: tuple[float, ...] = (3.5, 3.8, 2.5, 1.5, 1.5, 1.5)
+    arm_kp: tuple[float, ...] = (40.0, 44.0, 38.0, 20.0, 20.0, 20.0)
+    arm_kd: tuple[float, ...] = (2.0, 2.2, 1.9, 1.0, 1.0, 1.0)
     gripper_kp: float = 500.0
     gripper_kd: float = 10.0
+    arm_max_delta_per_step: float = 0.1
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -441,8 +442,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         H_a = cfg.history.num_actor_history
         H_c = cfg.history.num_critic_history
-        self._history_obs_buf = np.zeros((num_envs, H_a * _RAW_OBS_DIM), dtype=np.float64)
-        self._history_critic_buf = np.zeros((num_envs, H_c * _RAW_OBS_DIM), dtype=np.float64)
+        self._history_obs_buf = np.zeros((num_envs, H_a * _RAW_OBS_DIM), dtype=get_global_dtype())
+        self._history_critic_buf = np.zeros((num_envs, H_c * _RAW_OBS_DIM), dtype=get_global_dtype())
 
         self._default_arm_angles = self.default_angles[:6].copy()
 
@@ -516,11 +517,16 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             self.ee_goal_orn_quat, ee_local_quat,
         )
 
-        arm_ctrl = (
-            self.get_arm_dof_pos()
-            + arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
+        arm_pos = self.get_arm_dof_pos()
+        arm_delta = (
+            arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
             + self._cfg.ik.gain * dq_ik
         )
+        # Clamp per-step joint delta to prevent QACC explosion
+        max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
+        if max_delta > 0:
+            arm_delta = np.clip(arm_delta, -max_delta, max_delta)
+        arm_ctrl = arm_pos + arm_delta
 
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
@@ -556,17 +562,17 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         gripper_pos = raw_gripper
 
         return np.concatenate([
-            linvel,              # 3
-            gyro,                # 3
-            -gravity,            # 3
-            arm_diff,            # 6
-            arm_vel,             # 6
-            ee_local_pos,        # 3
-            armbase_ee_goal,     # 3
-            ee_error,            # 3
-            gripper_pos,         # 1
-            last_actions,        # 10
-        ], axis=1, dtype=get_global_dtype())
+            linvel.astype(get_global_dtype()),              # 3
+            gyro.astype(get_global_dtype()),                # 3
+            (-gravity).astype(get_global_dtype()),          # 3
+            arm_diff.astype(get_global_dtype()),            # 6
+            arm_vel.astype(get_global_dtype()),             # 6
+            ee_local_pos.astype(get_global_dtype()),        # 3
+            armbase_ee_goal.astype(get_global_dtype()),     # 3
+            ee_error.astype(get_global_dtype()),            # 3
+            gripper_pos.astype(get_global_dtype()),         # 1
+            last_actions.astype(get_global_dtype()),        # 10
+        ], axis=1)
 
     def _update_history(self, raw_obs, env_ids=None, *, critic_raw_obs=None):
         D = _RAW_OBS_DIM
