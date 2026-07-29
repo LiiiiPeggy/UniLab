@@ -111,8 +111,8 @@ class RangerBoxControlConfig(ControlConfig):
     arm_action_scale: float = 0.01
     arm_kp: tuple[float, ...] = (0.1, 0.11, 0.095, 0.05, 0.05, 0.05)
     arm_kd: tuple[float, ...] = (0.5, 0.55, 0.48, 0.25, 0.25, 0.25)
-    gripper_kp: float = 500.0
-    gripper_kd: float = 10.0
+    gripper_kp: float = 50.0
+    gripper_kd: float = 5.0
     arm_max_delta_per_step: float = 0.05
 
 

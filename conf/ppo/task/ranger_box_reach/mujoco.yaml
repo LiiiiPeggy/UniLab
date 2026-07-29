@@ -50,8 +50,8 @@ env:
     simulate_action_latency: false
     arm_kp: [10.0, 11.0, 9.5, 5.0, 5.0, 5.0]
     arm_kd: [5.0, 5.5, 4.8, 2.5, 2.5, 2.5]
-    gripper_kp: 500.0
-    gripper_kd: 10.0
+    gripper_kp: 50.0
+    gripper_kd: 5.0
   noise_config:
     level: 1.0
     scale_linvel: 0.1
