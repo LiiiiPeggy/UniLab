@@ -1,0 +1,121 @@
+# @package _global_
+training:
+  task_name: RangerBoxReach
+  sim_backend: mujoco
+
+algo:
+  num_envs: 256
+  max_iterations: 200
+  empirical_normalization: true
+  obs_groups:
+    actor:
+      - actor
+
+  policy:
+    init_noise_std: 0.5
+    actor_hidden_dims: [256, 128, 64]
+    critic_hidden_dims: [256, 128, 64]
+
+  algorithm:
+    learning_rate: 3.0e-4
+    entropy_coef: 1.0e-3
+    num_mini_batches: 4
+
+reward_config:
+  scales:
+    ee_distance: 4.0
+    ee_distance_l2: -1.0
+    base_vel_xy: -0.05
+    base_vel_z: 0.0
+    base_vel_yaw: -0.01
+    arm_dof_vel: -0.001
+    arm_dof_acc: -1.0e-6
+    torques: 0.0
+    base_orientation: 0.0
+    base_height: 0.0
+    arm_joint_limits: -1.0
+    arm_collision: 0.0
+    action_rate: -0.01
+    similar_to_default: -0.005
+    alive: 0.3
+  sigma_ee: 0.15
+
+env:
+  max_episode_seconds: 30.0
+  init_state:
+    pos: [0.0, 0.0, 0.278]
+  control_config:
+    arm_action_scale: 0.03
+    simulate_action_latency: false
+    arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
+    arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
+    gripper_kp: 500.0
+    gripper_kd: 10.0
+  noise_config:
+    level: 1.0
+    scale_linvel: 0.1
+    scale_gyro: 0.2
+    scale_gravity: 0.05
+    scale_joint_angle: 0.03
+    scale_joint_vel: 0.5
+    scale_ee_pos: 0.02
+    scale_ee_goal: 0.01
+  ik:
+    damping: 0.05
+    gain: 1.0
+    dq_clip: 0.2
+    use_orientation: false
+    orientation_mode: target
+  goal_ee:
+    sphere_l_range: [0.20, 0.50]
+    sphere_phi_range: [-1.20, 1.00]
+    sphere_theta_range: [-2.00, 2.00]
+    reachable_fraction: 0.30
+    extended_l_range: [0.50, 1.20]
+    extended_fraction: 0.70
+    traj_time_range: [1.0, 3.0]
+    hold_time_range: [0.5, 2.0]
+    collision_upper_limits: [0.30, 0.15, -0.10]
+    collision_lower_limits: [-0.20, -0.15, -0.50]
+    underground_limit: -0.50
+    num_collision_check_samples: 10
+    num_resample_attempts: 10
+    default_orn_roll: 1.5708
+    arm_induced_pitch: 0.0
+    delta_orn_r: [0.0, 0.0]
+    delta_orn_p: [0.0, 0.0]
+    delta_orn_y: [0.0, 0.0]
+    init_ee_cart: [0.30, 0.0, 0.30]
+  base_velocity_controller:
+    max_lin_vel: 1.5
+    max_ang_vel: 1.0
+    action_scale_lin: 1.5
+    action_scale_ang: 1.0
+    tau: 0.05
+    max_lin_acc: 1.5
+    max_ang_acc: 3.0
+    max_latency_steps: 4
+    action_noise_scale: 0.05
+    enable_latency: true
+    enable_noise: true
+    enable_wheel_visualization: true
+  domain_rand:
+    randomize_kp: true
+    kp_multiplier_range: [0.9, 1.1]
+    randomize_kd: true
+    kd_multiplier_range: [0.9, 1.1]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.9, 1.1]
+    random_com: true
+    com_offset_x: [-0.03, 0.03]
+    randomize_ground_friction: false
+    randomize_dof_armature: true
+    dof_armature_multiplier_range: [0.8, 1.2]
+    push_robots: false
+  history:
+    num_actor_history: 1
+    num_critic_history: 1
+  arm_stage:
+    freeze_arm_joints: false
+    disable_ee_goal_trajectory: false
+    fixed_ee_goal_cart: [0.30, 0.0, 0.30]

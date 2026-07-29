@@ -1334,9 +1334,11 @@ class MuJoCoBackend(SimBackend):
     ) -> None:
         """Write planar velocity to freejoint qvel (vx, vy, wz only)."""
         _np = np
-        qvel = self._data.qvel
+        qvel = self._physics_state[:, self._idx_qvel : self._idx_qvel + self.nv]
         if qvel.ndim != 2:
-            raise RuntimeError("set_root_planar_velocity requires batched qvel (num_envs, nv)")
+            raise RuntimeError(
+                "set_root_planar_velocity requires batched qvel (num_envs, nv)"
+            )
         if preserve_uncontrolled:
             qvel[:, 0] = _np.asarray(lin_vel_xy[:, 0], dtype=_np.float64)
             qvel[:, 1] = _np.asarray(lin_vel_xy[:, 1], dtype=_np.float64)
@@ -1358,19 +1360,22 @@ class MuJoCoBackend(SimBackend):
             jid = _mujoco.mj_name2id(self._model, _mujoco.mjtObj.mjOBJ_JOINT, name)
             if jid < 0:
                 raise ValueError(f"Joint {name!r} not found in MuJoCo model")
-            adr = int(self._model.jnt_qposadr[jid]) - self._root_qpos_dim
-            self._data.qpos[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
+            adr = int(self._model.jnt_qposadr[jid])
+            self._qpos_view[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
 
     def set_joint_qvel(self, names: Sequence[str], values: np.ndarray) -> None:
         """Set qvel for named joints (wheel/steering visualization)."""
         _np = np
         _mujoco = mujoco
+        qvel_view = self._physics_state[
+            :, self._idx_qvel : self._idx_qvel + self.nv
+        ]
         for i, name in enumerate(names):
             jid = _mujoco.mj_name2id(self._model, _mujoco.mjtObj.mjOBJ_JOINT, name)
             if jid < 0:
                 raise ValueError(f"Joint {name!r} not found in MuJoCo model")
-            adr = int(self._model.jnt_dofadr[jid]) - self._root_qvel_dim
-            self._data.qvel[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
+            adr = int(self._model.jnt_dofadr[jid])
+            qvel_view[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
 
     # ------------------------------------------------------------------ #
 
