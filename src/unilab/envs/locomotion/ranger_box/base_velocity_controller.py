@@ -165,7 +165,3 @@ class BaseVelocityController:
         self._backend.set_root_planar_velocity(
             v_world[:, :2], w_world[:, 2], preserve_uncontrolled=True
         )
-
-        # SE(2) lock: reset z position to initial height to prevent sink
-        # qpos layout: [x, y, z, qw, qx, qy, qz, ...]
-        self._backend._qpos_view[:, 2] = self._init_base_z

@@ -439,6 +439,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         self._prev_arm_vel = np.zeros((num_envs, 6), dtype=np.float64)
         self._arm_goal_timer = np.zeros((num_envs,), dtype=np.int32)
+        self._pending_arm_target = np.zeros((num_envs, 6), dtype=np.float64)
 
         H_a = cfg.history.num_actor_history
         H_c = cfg.history.num_critic_history
@@ -634,6 +635,13 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             list(self._cfg.asset.arm_joint_names),
             np.zeros((self._num_envs, 6), dtype=np.float64),
         )
+
+        # SE(2) planar lock: pin z position and roll/pitch orientation
+        # AFTER physics step to prevent gravity-induced sink and tilt.
+        _qpos = self._backend._qpos_view
+        _qpos[:, 2] = self._base_controller._init_base_z
+        _qpos[:, 3:7] = [1.0, 0.0, 0.0, 0.0]  # identity quaternion
+
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()
 
