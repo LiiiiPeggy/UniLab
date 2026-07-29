@@ -109,8 +109,8 @@ class RangerBoxNoiseConfig(_Go2ArmNoiseConfig):
 @dataclass
 class RangerBoxControlConfig(ControlConfig):
     arm_action_scale: float = 0.01
-    arm_kp: tuple[float, ...] = (10.0, 11.0, 9.5, 5.0, 5.0, 5.0)
-    arm_kd: tuple[float, ...] = (5.0, 5.5, 4.8, 2.5, 2.5, 2.5)
+    arm_kp: tuple[float, ...] = (0.1, 0.11, 0.095, 0.05, 0.05, 0.05)
+    arm_kd: tuple[float, ...] = (0.5, 0.55, 0.48, 0.25, 0.25, 0.25)
     gripper_kp: float = 500.0
     gripper_kd: float = 10.0
     arm_max_delta_per_step: float = 0.05
@@ -528,20 +528,15 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_delta = np.clip(arm_delta, -max_delta, max_delta)
         arm_ctrl = arm_pos + arm_delta
 
-        # Set arm joints kinematically (direct qpos write) to bypass
-        # position-actuator instability with freejoint base.
-        arm_ctrl_clipped = np.clip(arm_ctrl, self._ctrl_low[:6], self._ctrl_high[:6])
-        self._backend.set_joint_qpos(
-            list(self._cfg.asset.arm_joint_names), arm_ctrl_clipped.astype(np.float64)
-        )
-        # Zero arm joint velocities so physics doesn't drift them
-        self._backend.set_joint_qvel(
-            list(self._cfg.asset.arm_joint_names),
-            np.zeros((actions.shape[0], 6), dtype=np.float64),
-        )
+        # Store arm target for kinematic write in update_state (after physics)
+        self._pending_arm_target = np.clip(
+            arm_ctrl, self._ctrl_low[:6], self._ctrl_high[:6]
+        ).astype(np.float64)
 
+        # Send CURRENT arm positions as ctrl so position actuators
+        # produce minimal force during physics step.
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
-        ctrl = np.concatenate([arm_ctrl_clipped, grip_ctrl], axis=1)
+        ctrl = np.concatenate([arm_pos, grip_ctrl], axis=1)
 
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
         self._base_controller.apply_velocity()
@@ -628,6 +623,17 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # Base velocity is already applied in apply_action (before physics step).
         # Use controller's v_real directly as base linvel.
         linvel = self._base_controller.v_real.astype(get_global_dtype())
+
+        # Apply arm kinematic positions AFTER physics step to prevent
+        # position-actuator / freejoint instability.  The arm delta was
+        # already computed in apply_action; we just persist the target here.
+        self._backend.set_joint_qpos(
+            list(self._cfg.asset.arm_joint_names), self._pending_arm_target
+        )
+        self._backend.set_joint_qvel(
+            list(self._cfg.asset.arm_joint_names),
+            np.zeros((self._num_envs, 6), dtype=np.float64),
+        )
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()
 
