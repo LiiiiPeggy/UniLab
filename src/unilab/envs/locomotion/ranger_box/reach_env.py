@@ -530,7 +530,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
-        return np.clip(ctrl, self._ctrl_low, self._ctrl_high).astype(get_global_dtype())
+        ctrl_clipped = np.clip(ctrl, self._ctrl_low, self._ctrl_high).astype(get_global_dtype())
+
+        # Apply base velocity BEFORE physics step so MuJoCo integrates from it
+        self._base_controller.apply_velocity()
+
+        return ctrl_clipped
 
     # ── Observation ─────────────────────────────────────────────────
 
@@ -609,11 +614,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     # ── State update ────────────────────────────────────────────────
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
-        # Apply base velocity to physics (after integration)
-        self._base_controller.apply_velocity()
-
-        # Use controller velocity as base linvel (A+ scheme: velocimeter
-        # sensor reflects physics-computed velocity, not our override)
+        # Base velocity is already applied in apply_action (before physics step).
+        # Use controller's v_real directly as base linvel.
         linvel = self._base_controller.v_real.astype(get_global_dtype())
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()
