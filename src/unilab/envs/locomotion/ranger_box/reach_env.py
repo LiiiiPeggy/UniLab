@@ -31,6 +31,8 @@ from unilab.envs.locomotion.go2_arm.base import (
     Go2ArmBaseEnv,
     Go2ArmSensor,
     IKConfig,
+)
+from unilab.envs.locomotion.go2_arm.base import (
     NoiseConfig as _Go2ArmNoiseConfig,
 )
 from unilab.envs.locomotion.go2_arm.manip_loco import (
@@ -370,7 +372,6 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
             env.armbase_pos_world[env_ids],
             env.armbase_quat_world[env_ids],
         )
-        n = len(env_ids)
         sliced_info: dict = {}
         for k, v in info_updates.items():
             if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == env._num_envs:
@@ -632,14 +633,14 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         ).any(axis=1)
         terminated = (tilt_sq > np.sin(1.0)**2) | limit_violated
 
-        arm_acc = (arm_vel - self._prev_arm_vel) / self._cfg.ctrl_dt
+        prev_arm_vel_saved = self._prev_arm_vel.copy()
         self._prev_arm_vel = arm_vel.copy()
 
         ctx = _RewardContext(
             info=state.info,
             linvel=linvel, gyro=gyro, gravity=gravity,
             arm_pos=arm_pos, arm_vel=arm_vel,
-            prev_arm_vel=self._prev_arm_vel.copy(),
+            prev_arm_vel=prev_arm_vel_saved,
             gripper_pos=self.get_gripper_dof_pos(),
             num_envs=self._num_envs,
             default_arm_angles=self._default_arm_angles,

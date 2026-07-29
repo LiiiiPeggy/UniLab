@@ -17,16 +17,19 @@ class TestBackendPlanarVelocity:
 
     @pytest.fixture(scope="class")
     def mj_backend(self):
+        import os
+        import tempfile
+
         from unilab.base.backend.mujoco.backend import MuJoCoBackend
         from unilab.base.scene import SceneCfg
-        import tempfile, os
 
         xml = """<mujoco model="test_planar">
           <worldbody><body name="base"><freejoint/>
           <geom type="box" size="0.1 0.1 0.05"/></body></worldbody>
         </mujoco>"""
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False)
-        tmp.write(xml); tmp.close()
+        tmp.write(xml)
+        tmp.close()
         scene = SceneCfg(model_file=tmp.name)
         backend = MuJoCoBackend(scene, num_envs=4, sim_dt=0.01)
         os.unlink(tmp.name)
@@ -69,8 +72,8 @@ class TestRangerBoxDataclasses:
         assert a.wheel_radius == 0.152
 
     def test_sensor_inherits_go2arm(self):
-        from unilab.envs.locomotion.ranger_box.reach_env import RangerBoxSensor
         from unilab.envs.locomotion.go2_arm.base import Go2ArmSensor
+        from unilab.envs.locomotion.ranger_box.reach_env import RangerBoxSensor
         s = RangerBoxSensor()
         assert isinstance(s, Go2ArmSensor)
         assert s.local_linvel == "imu-velocimeter"
@@ -107,11 +110,12 @@ class TestBaseVelocityController:
 
     @pytest.fixture
     def ctrl(self):
-        from unilab.envs.locomotion.ranger_box.reach_env import (
-            BaseVelocityControllerConfig, RangerBoxAsset,
-        )
         from unilab.envs.locomotion.ranger_box.base_velocity_controller import (
             BaseVelocityController,
+        )
+        from unilab.envs.locomotion.ranger_box.reach_env import (
+            BaseVelocityControllerConfig,
+            RangerBoxAsset,
         )
 
         class _MockBackend:

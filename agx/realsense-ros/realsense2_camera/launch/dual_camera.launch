@@ -1,0 +1,13 @@
+<launch>
+  <!-- 雷达上方相机（保持默认话题名 /camera/*） -->
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="camera"    value="camera"/>
+    <arg name="serial_no" value="$(arg lidar_cam_serial)"/>
+  </include>
+
+  <!-- 夹爪相机（话题名 /gripper_camera/*） -->
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="camera"    value="gripper_camera"/>
+    <arg name="serial_no" value="$(arg gripper_cam_serial)"/>
+  </include>
+</launch>
