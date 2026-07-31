@@ -119,31 +119,36 @@ class BaseVelocityController:
         dv[:, 2] = np.clip(dv[:, 2], -cfg.max_ang_acc * dt, cfg.max_ang_acc * dt)
         v_target = self.v_real + dv
 
-        # --- 5. First-order response ---
+        # --- 5. First-order response (filtered state, NO noise) ---
         alpha = dt / (cfg.tau + dt)
         self.v_real = self.v_real + alpha * (v_target - self.v_real)
 
-        # --- 6. Noise (after first-order) ---
+        # --- 6. Noise applied to execution velocity only (NOT accumulated) ---
+        v_exec = self.v_real.copy()
         if cfg.enable_noise:
             noise = np.random.standard_normal((N, 3)).astype(np.float64)
             noise[:, 0:2] *= cfg.action_noise_scale * cfg.max_lin_vel
             noise[:, 2] *= cfg.action_noise_scale * cfg.max_ang_vel
-            self.v_real = self.v_real + noise
+            v_exec = v_exec + noise
 
         # --- 7. Final clip ---
-        self.v_real = np.clip(self.v_real, -self._max_vel_arr, self._max_vel_arr)
+        v_exec = np.clip(v_exec, -self._max_vel_arr, self._max_vel_arr)
+
+        # Store execution velocity for world-frame conversion
+        self._v_exec = v_exec
 
     def apply_velocity(self) -> None:
-        """Write v_real to backend via set_root_planar_velocity + wheel IK.
-        Called AFTER physics integration (in update_state).
+        """Write v_exec to backend via set_root_planar_velocity + wheel IK.
+        Called BEFORE physics step (in apply_action).
         """
         N = self._num_envs
         cfg = self._cfg
+        v_apply = getattr(self, "_v_exec", self.v_real)
 
         # --- 8. Wheel visualization (before world-frame conversion) ---
         if cfg.enable_wheel_visualization:
             steer, omega = _compute_wheel_ik(
-                self.v_real, self._asset.wheel_positions, self._asset.wheel_radius
+                v_apply, self._asset.wheel_positions, self._asset.wheel_radius
             )
             self._backend.set_joint_qpos(list(self._asset.steering_joint_names), steer)
             self._backend.set_joint_qvel(list(self._asset.wheel_joint_names), omega)
@@ -152,10 +157,10 @@ class BaseVelocityController:
         base_quat = self._backend.get_sensor_data("imu-framequat")
 
         v_body = np.concatenate(
-            [self.v_real[:, 0:2], np.zeros((N, 1))], axis=1, dtype=np.float64
+            [v_apply[:, 0:2], np.zeros((N, 1))], axis=1, dtype=np.float64
         )
         w_body = np.concatenate(
-            [np.zeros((N, 2)), self.v_real[:, 2:3]], axis=1, dtype=np.float64
+            [np.zeros((N, 2)), v_apply[:, 2:3]], axis=1, dtype=np.float64
         )
 
         from unilab.envs.common.rotation import np_quat_apply_batched

@@ -1372,6 +1372,22 @@ class MuJoCoBackend(SimBackend):
             adr = int(self._model.jnt_dofadr[jid])
             qvel_view[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
 
+    def forward_sensors(self) -> None:
+        """Recompute sensor data from current physics state."""
+        _np = np
+        # nstep must be >= 1; use single step with zero ctrl so
+        # the integrator runs but minimal change (vz etc already zeroed).
+        zero_ctrl = _np.zeros((self._num_envs, 1, self._model.nu), dtype=self._np_dtype)
+        _, sensor_np = self._pool.step(  # type: ignore[union-attr]
+            self._physics_state,
+            nstep=1,
+            control=zero_ctrl,
+            control_spec=int(mujoco.mjtState.mjSTATE_CTRL),
+            return_sensor=True,
+            post_step_forward_sensor=True,
+        )
+        self._sensor_data[:] = _np.asarray(sensor_np, dtype=self._np_dtype)
+
     # ------------------------------------------------------------------ #
 
     def _apply_position_actuator_gains_to_model(

@@ -523,24 +523,23 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
             + self._cfg.ik.gain * dq_ik
         )
-        # Clamp per-step joint delta to prevent QACC explosion
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
         if max_delta > 0:
             arm_delta = np.clip(arm_delta, -max_delta, max_delta)
-        arm_ctrl = arm_pos + arm_delta
+        arm_ctrl = np.clip(arm_pos + arm_delta, self._ctrl_low[:6], self._ctrl_high[:6])
 
-        # Store arm target for kinematic write in update_state (after physics)
-        self._pending_arm_target = np.clip(
-            arm_ctrl, self._ctrl_low[:6], self._ctrl_high[:6]
-        ).astype(np.float64)
-
-        # Send CURRENT arm positions as ctrl so position actuators
-        # produce minimal force during physics step.
+        # Send arm target as position-actuator ctrl.  Actuators have
+        # forcelimited + forcerange, so the physics step will move the
+        # arm smoothly toward the target with bounded force.
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
-        ctrl = np.concatenate([arm_pos, grip_ctrl], axis=1)
+        ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
         self._base_controller.apply_velocity()
+
+        # SE(2) planar lock: pin z, preserve yaw, zero roll/pitch
+        # Done here (pre-physics) so the next backend.step() starts clean.
+        self._apply_se2_lock()
 
         return ctrl.astype(get_global_dtype())
 
@@ -621,27 +620,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     # ── State update ────────────────────────────────────────────────
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
-        # Base velocity is already applied in apply_action (before physics step).
-        # Use controller's v_real directly as base linvel.
         linvel = self._base_controller.v_real.astype(get_global_dtype())
-
-        # Apply arm kinematic positions AFTER physics step to prevent
-        # position-actuator / freejoint instability.  The arm delta was
-        # already computed in apply_action; we just persist the target here.
-        self._backend.set_joint_qpos(
-            list(self._cfg.asset.arm_joint_names), self._pending_arm_target
-        )
-        self._backend.set_joint_qvel(
-            list(self._cfg.asset.arm_joint_names),
-            np.zeros((self._num_envs, 6), dtype=np.float64),
-        )
-
-        # SE(2) planar lock: pin z position and roll/pitch orientation
-        # AFTER physics step to prevent gravity-induced sink and tilt.
-        _qpos = self._backend._qpos_view
-        _qpos[:, 2] = self._base_controller._init_base_z
-        _qpos[:, 3:7] = [1.0, 0.0, 0.0, 0.0]  # identity quaternion
-
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()
 
@@ -695,15 +674,44 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         reward = self._compute_reward(ctx)
         obs = self._compute_obs(state.info, linvel, gyro, gravity, arm_pos, arm_vel,
                                 ee_local_pos, self.armbase_ee_goal, add_noise=True)
-        # NaN guard: physics instability can produce NaN obs; zero them out
         for k in obs:
             obs[k] = np.nan_to_num(obs[k], copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-        # Also terminate envs with NaN in arm pos (physics explosion)
         nan_terminated = np.any(np.isnan(arm_pos), axis=1)
         return state.replace(
             obs=obs, reward=reward,
             terminated=np.logical_or(terminated, nan_terminated),
         )
+
+    def _apply_se2_lock(self) -> None:
+        """SE(2) planar lock: pin z, zero roll/pitch, preserve yaw.
+
+        Called AFTER physics step.  Writes corrected qpos + qvel, then
+        refreshes sensor data so subsequent reads see the locked state.
+        """
+        _qpos = self._backend._qpos_view
+        qvel = self._backend._physics_state[
+            :, self._backend._idx_qvel : self._backend._idx_qvel + self._backend.nv
+        ]
+
+        # Pin z to initial height
+        _qpos[:, 2] = self._base_controller._init_base_z
+
+        # Extract yaw from current quaternion, rebuild yaw-only quaternion
+        qw, qx, qy, qz = (_qpos[:, i] for i in range(3, 7))
+        yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        half_yaw = yaw * 0.5
+        _qpos[:, 3] = np.cos(half_yaw)   # qw
+        _qpos[:, 4] = 0.0                 # qx
+        _qpos[:, 5] = 0.0                 # qy
+        _qpos[:, 6] = np.sin(half_yaw)   # qz
+
+        # Zero vz, wx, wy (indices 2, 3, 4 in freejoint qvel)
+        qvel[:, 2] = 0.0
+        qvel[:, 3] = 0.0
+        qvel[:, 4] = 0.0
+
+        # Refresh sensor data from corrected state
+        self._backend.forward_sensors()
 
     # ── Reward ──────────────────────────────────────────────────────
 
@@ -808,6 +816,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         armbase_pos = self.armbase_pos_world[env_ids]
         armbase_quat = self.armbase_quat_world[env_ids]
         goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goals)
+        # Clamp goal z above ground level (0.05 m floor + margin)
+        goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
         self.world_ee_goal[env_ids] = goals_world
         self._arm_goal_timer[env_ids] = 0
 

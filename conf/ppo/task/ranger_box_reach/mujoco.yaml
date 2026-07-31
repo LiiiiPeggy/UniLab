@@ -45,15 +45,15 @@ env:
   init_state:
     pos: [0.0, 0.0, 0.278]
   control_config:
-    arm_action_scale: 0.01
-    arm_max_delta_per_step: 0.05
+    arm_action_scale: 0.0
+    arm_max_delta_per_step: 0.01
     simulate_action_latency: false
-    arm_kp: [10.0, 11.0, 9.5, 5.0, 5.0, 5.0]
-    arm_kd: [5.0, 5.5, 4.8, 2.5, 2.5, 2.5]
+    arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
+    arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
     gripper_kp: 50.0
     gripper_kd: 5.0
   noise_config:
-    level: 1.0
+    level: 0.0
     scale_linvel: 0.1
     scale_gyro: 0.2
     scale_gravity: 0.05
@@ -63,8 +63,8 @@ env:
     scale_ee_goal: 0.01
   ik:
     damping: 0.05
-    gain: 1.0
-    dq_clip: 0.2
+    gain: 0.0
+    dq_clip: 0.05
     use_orientation: false
     orientation_mode: target
   goal_ee:
@@ -84,8 +84,8 @@ env:
     max_ang_acc: 3.0
     max_latency_steps: 4
     action_noise_scale: 0.05
-    enable_latency: true
-    enable_noise: true
+    enable_latency: false
+    enable_noise: false
     enable_wheel_visualization: true
   domain_rand:
     randomize_kp: true
