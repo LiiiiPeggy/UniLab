@@ -50,6 +50,7 @@ _RAW_OBS_DIM = 41
 # Asset
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RangerBoxAsset(Asset):
     base_name: str = "base"
@@ -57,21 +58,31 @@ class RangerBoxAsset(Asset):
     ee_site_name: str = "right_center"
     ee_body_name: str = "cr10_Link6"
     arm_joint_names: tuple[str, ...] = (
-        "cr10_joint1", "cr10_joint2", "cr10_joint3",
-        "cr10_joint4", "cr10_joint5", "cr10_joint6",
+        "cr10_joint1",
+        "cr10_joint2",
+        "cr10_joint3",
+        "cr10_joint4",
+        "cr10_joint5",
+        "cr10_joint6",
     )
     gripper_joint_name: str = "gripper_finger1_joint"
     steering_joint_names: tuple[str, ...] = (
-        "fr_steering_joint", "fl_steering_wheel_joint",
-        "rl_steering_wheel_joint", "rr_steering_wheel_joint",
+        "fr_steering_joint",
+        "fl_steering_wheel_joint",
+        "rl_steering_wheel_joint",
+        "rr_steering_wheel_joint",
     )
     wheel_joint_names: tuple[str, ...] = (
-        "fr_wheel_joint", "fl_wheel_joint",
-        "rl_wheel_joint", "rr_wheel_joint",
+        "fr_wheel_joint",
+        "fl_wheel_joint",
+        "rl_wheel_joint",
+        "rr_wheel_joint",
     )
     wheel_positions: tuple[tuple[float, float], ...] = (
-        (0.445, -0.28), (0.445, 0.28),
-        (-0.445, 0.28), (-0.445, -0.28),
+        (0.445, -0.28),
+        (0.445, 0.28),
+        (-0.445, 0.28),
+        (-0.445, -0.28),
     )
     wheel_radius: float = 0.152
 
@@ -79,6 +90,7 @@ class RangerBoxAsset(Asset):
 # ══════════════════════════════════════════════════════════════════════════
 # Sensor
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class RangerBoxSensor(Go2ArmSensor):
@@ -97,6 +109,7 @@ class RangerBoxSensor(Go2ArmSensor):
 # Noise
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RangerBoxNoiseConfig(_Go2ArmNoiseConfig):
     scale_ee_goal: float = 0.01
@@ -105,6 +118,7 @@ class RangerBoxNoiseConfig(_Go2ArmNoiseConfig):
 # ══════════════════════════════════════════════════════════════════════════
 # Control
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class RangerBoxControlConfig(ControlConfig):
@@ -119,6 +133,7 @@ class RangerBoxControlConfig(ControlConfig):
 # ══════════════════════════════════════════════════════════════════════════
 # Base Velocity Controller Config
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class BaseVelocityControllerConfig:
@@ -140,6 +155,7 @@ class BaseVelocityControllerConfig:
 # Domain Randomization
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RangerBoxDomainRandConfig(DomainRandConfig):
     randomize_ground_friction: bool = False
@@ -160,31 +176,35 @@ class RangerBoxDomainRandConfig(DomainRandConfig):
 # Reward
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RangerBoxRewardConfig:
-    scales: dict[str, float] = field(default_factory=lambda: {
-        "ee_distance": 4.0,
-        "ee_distance_l2": -1.0,
-        "base_vel_xy": -0.05,
-        "base_vel_z": 0.0,
-        "base_vel_yaw": -0.01,
-        "arm_dof_vel": -0.001,
-        "arm_dof_acc": -1.0e-6,
-        "torques": 0.0,
-        "base_orientation": 0.0,
-        "base_height": 0.0,
-        "arm_joint_limits": -1.0,
-        "arm_collision": 0.0,
-        "action_rate": -0.01,
-        "similar_to_default": -0.005,
-        "alive": 0.3,
-    })
+    scales: dict[str, float] = field(
+        default_factory=lambda: {
+            "ee_distance": 4.0,
+            "ee_distance_l2": -1.0,
+            "base_vel_xy": -0.05,
+            "base_vel_z": 0.0,
+            "base_vel_yaw": -0.01,
+            "arm_dof_vel": -0.001,
+            "arm_dof_acc": -1.0e-6,
+            "torques": 0.0,
+            "base_orientation": 0.0,
+            "base_height": 0.0,
+            "arm_joint_limits": -1.0,
+            "arm_collision": 0.0,
+            "action_rate": -0.01,
+            "similar_to_default": -0.005,
+            "alive": 0.3,
+        }
+    )
     sigma_ee: float = 0.15
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Scene resolution
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _default_ranger_box_model_file() -> str:
     return str(ASSETS_ROOT_PATH / "robots" / "ranger_box" / "scene_flat.xml")
@@ -211,20 +231,25 @@ def _resolve_ranger_box_scene(cfg: "RangerBoxReachCfg") -> SceneCfg:
 
 def build_ranger_box_position_gains(cc: RangerBoxControlConfig) -> dict[str, np.ndarray]:
     return {
-        "kp": np.concatenate([
-            np.asarray(cc.arm_kp, dtype=np.float64),
-            np.asarray([cc.gripper_kp], dtype=np.float64),
-        ]),
-        "kd": np.concatenate([
-            np.asarray(cc.arm_kd, dtype=np.float64),
-            np.asarray([cc.gripper_kd], dtype=np.float64),
-        ]),
+        "kp": np.concatenate(
+            [
+                np.asarray(cc.arm_kp, dtype=np.float64),
+                np.asarray([cc.gripper_kp], dtype=np.float64),
+            ]
+        ),
+        "kd": np.concatenate(
+            [
+                np.asarray(cc.arm_kd, dtype=np.float64),
+                np.asarray([cc.gripper_kd], dtype=np.float64),
+            ]
+        ),
     }
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Top-level EnvCfg
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @registry.envcfg("RangerBoxReach")
 @dataclass
@@ -251,6 +276,7 @@ class RangerBoxReachCfg(Go2ArmBaseCfg):
 # ══════════════════════════════════════════════════════════════════════════
 # Reward context
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class _RewardContext:
@@ -281,6 +307,7 @@ class _RewardContext:
 # ══════════════════════════════════════════════════════════════════════════
 # Reward functions — all return positive values (negative in YAML scale)
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _reward_ee_distance(ctx: _RewardContext) -> np.ndarray:
     diff = ctx.ee_pos_world - ctx.world_ee_goal
@@ -322,6 +349,7 @@ def _reward_arm_joint_limits(ctx: _RewardContext) -> np.ndarray:
 # DR Provider
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class RangerBoxReachDRProvider(LocomotionDRProvider):
     """DR provider for RangerBoxReach — caches kp/kd/mass/armature at init."""
 
@@ -353,6 +381,7 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
         env._history_obs_buf[env_ids] = 0.0
         env._history_critic_buf[env_ids] = 0.0
         env._prev_arm_vel[env_ids] = 0.0
+        env._pending_arm_target[env_ids] = env._default_arm_angles
         env._base_controller.reset(env_ids, np.random.default_rng())
         return plan
 
@@ -381,8 +410,14 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
                 sliced_info[k] = v
         ee_local_pos, _ = env.get_ee_local_pose()
         raw = env._compute_raw_obs(
-            sliced_info, linvel, gyro, gravity, dof_pos, dof_vel,
-            ee_local_pos[env_ids], env.armbase_ee_goal[env_ids],
+            sliced_info,
+            linvel,
+            gyro,
+            gravity,
+            dof_pos,
+            dof_vel,
+            ee_local_pos[env_ids],
+            env.armbase_ee_goal[env_ids],
             add_noise=True,
         )
         return env._update_history(raw, env_ids=env_ids)
@@ -391,6 +426,7 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
 # ══════════════════════════════════════════════════════════════════════════
 # RangerBoxReachEnv
 # ══════════════════════════════════════════════════════════════════════════
+
 
 @registry.env("RangerBoxReach", sim_backend="mujoco")
 class RangerBoxReachEnv(Go2ArmBaseEnv):
@@ -439,14 +475,26 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         self._prev_arm_vel = np.zeros((num_envs, 6), dtype=np.float64)
         self._arm_goal_timer = np.zeros((num_envs,), dtype=np.int32)
-        self._pending_arm_target = np.zeros((num_envs, 6), dtype=np.float64)
 
         H_a = cfg.history.num_actor_history
         H_c = cfg.history.num_critic_history
         self._history_obs_buf = np.zeros((num_envs, H_a * _RAW_OBS_DIM), dtype=get_global_dtype())
-        self._history_critic_buf = np.zeros((num_envs, H_c * _RAW_OBS_DIM), dtype=get_global_dtype())
+        self._history_critic_buf = np.zeros(
+            (num_envs, H_c * _RAW_OBS_DIM), dtype=get_global_dtype()
+        )
 
         self._default_arm_angles = self.default_angles[:6].copy()
+
+        # Integrated arm target reference (rad), initialized to the default
+        # pose.  Each step the policy action / IK delta is added to it, and the
+        # position actuators servo toward it.  Deliberately NOT "target =
+        # current qpos": chasing the current position gives the position
+        # actuator zero steady-state error, degenerating it into a pure damper
+        # with no restoring spring, so the arm drifts under gravity to its
+        # joint limits.
+        self._pending_arm_target = (
+            np.broadcast_to(self._default_arm_angles, (num_envs, 6)).astype(np.float64).copy()
+        )
 
         self._arm_joint_upper = np.array([0.94, 1.57, 2.86, 3.14, 3.14, 3.14], dtype=np.float64)
         self._arm_joint_lower = np.array(
@@ -478,9 +526,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
     def _init_action_space(self) -> None:
         import gymnasium as gym
-        self._action_space = gym.spaces.Box(
-            low=-1.0, high=1.0, shape=(10,), dtype=np.float32
-        )
+
+        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(10,), dtype=np.float32)
 
     def _init_buffers(self) -> None:
         dtype = get_global_dtype()
@@ -488,9 +535,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         self._init_qpos = np.asarray(raw_qpos, dtype=dtype)
         # default_angles = arm control defaults from keyframe ctrl
         # (6 arm joints + 1 gripper), NOT from qpos tail.
-        self.default_angles = np.array(
-            [0.0, -0.3, 0.75, 0.0, 0.45, 0.0, 0.0], dtype=dtype
-        )
+        self.default_angles = np.array([0.0, -0.3, 0.75, 0.0, 0.45, 0.0, 0.0], dtype=dtype)
         raw_qvel = self._backend.get_init_qvel()
         self._init_qvel = np.asarray(raw_qvel, dtype=dtype)
 
@@ -514,11 +559,19 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         ee_local_pos, ee_local_quat = self.get_ee_local_pose()
         dq_ik = self.compute_arm_ik_delta(
-            self.armbase_ee_goal, ee_local_pos,
-            self.ee_goal_orn_quat, ee_local_quat,
+            self.armbase_ee_goal,
+            ee_local_pos,
+            self.ee_goal_orn_quat,
+            ee_local_quat,
         )
 
-        arm_pos = self.get_arm_dof_pos()
+        # Integrated arm target: add the policy/IK delta to the persistent
+        # reference, clip, and servo the position actuators toward it.  This
+        # gives the actuators a real spring to a reference pose (instead of
+        # chasing the current qpos, which zeroes the PD error and lets the arm
+        # drift under gravity).  Actuators are forcelimited + forcerange, so
+        # the physics step moves the arm smoothly toward the target with
+        # bounded force.
         arm_delta = (
             arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
             + self._cfg.ik.gain * dq_ik
@@ -526,11 +579,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
         if max_delta > 0:
             arm_delta = np.clip(arm_delta, -max_delta, max_delta)
-        arm_ctrl = np.clip(arm_pos + arm_delta, self._ctrl_low[:6], self._ctrl_high[:6])
-
-        # Send arm target as position-actuator ctrl.  Actuators have
-        # forcelimited + forcerange, so the physics step will move the
-        # arm smoothly toward the target with bounded force.
+        self._pending_arm_target = np.clip(
+            self._pending_arm_target + arm_delta,
+            self._ctrl_low[:6],
+            self._ctrl_high[:6],
+        )
+        arm_ctrl = self._pending_arm_target
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 
@@ -546,8 +600,17 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     # ── Observation ─────────────────────────────────────────────────
 
     def _compute_raw_obs(
-        self, info, linvel, gyro, gravity, dof_pos, dof_vel,
-        ee_local_pos, armbase_ee_goal, *, add_noise=True,
+        self,
+        info,
+        linvel,
+        gyro,
+        gravity,
+        dof_pos,
+        dof_vel,
+        ee_local_pos,
+        armbase_ee_goal,
+        *,
+        add_noise=True,
     ) -> np.ndarray:
         n = len(dof_pos)
         # Slice arm DOF from full dof_pos/dof_vel
@@ -572,18 +635,21 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             raw_gripper = raw_gripper[:n]
         gripper_pos = raw_gripper
 
-        return np.concatenate([
-            linvel.astype(get_global_dtype()),              # 3
-            gyro.astype(get_global_dtype()),                # 3
-            (-gravity).astype(get_global_dtype()),          # 3
-            arm_diff.astype(get_global_dtype()),            # 6
-            arm_vel.astype(get_global_dtype()),             # 6
-            ee_local_pos.astype(get_global_dtype()),        # 3
-            armbase_ee_goal.astype(get_global_dtype()),     # 3
-            ee_error.astype(get_global_dtype()),            # 3
-            gripper_pos.astype(get_global_dtype()),         # 1
-            last_actions.astype(get_global_dtype()),        # 10
-        ], axis=1)
+        return np.concatenate(
+            [
+                linvel.astype(get_global_dtype()),  # 3
+                gyro.astype(get_global_dtype()),  # 3
+                (-gravity).astype(get_global_dtype()),  # 3
+                arm_diff.astype(get_global_dtype()),  # 6
+                arm_vel.astype(get_global_dtype()),  # 6
+                ee_local_pos.astype(get_global_dtype()),  # 3
+                armbase_ee_goal.astype(get_global_dtype()),  # 3
+                ee_error.astype(get_global_dtype()),  # 3
+                gripper_pos.astype(get_global_dtype()),  # 1
+                last_actions.astype(get_global_dtype()),  # 10
+            ],
+            axis=1,
+        )
 
     def _update_history(self, raw_obs, env_ids=None, *, critic_raw_obs=None):
         D = _RAW_OBS_DIM
@@ -597,19 +663,20 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             if H_c > 1:
                 self._history_critic_buf = np.roll(self._history_critic_buf, -D, axis=1)
             self._history_critic_buf[:, -D:] = critic_step
-            return {"obs": self._history_obs_buf.copy(),
-                    "critic": self._history_critic_buf.copy()}
+            return {"obs": self._history_obs_buf.copy(), "critic": self._history_critic_buf.copy()}
         else:
             if H_a > 1:
-                self._history_obs_buf[env_ids] = np.roll(
-                    self._history_obs_buf[env_ids], -D, axis=1)
+                self._history_obs_buf[env_ids] = np.roll(self._history_obs_buf[env_ids], -D, axis=1)
             self._history_obs_buf[env_ids, -D:] = raw_obs
             if H_c > 1:
                 self._history_critic_buf[env_ids] = np.roll(
-                    self._history_critic_buf[env_ids], -D, axis=1)
+                    self._history_critic_buf[env_ids], -D, axis=1
+                )
             self._history_critic_buf[env_ids, -D:] = critic_step
-            return {"obs": self._history_obs_buf[env_ids].copy(),
-                    "critic": self._history_critic_buf[env_ids].copy()}
+            return {
+                "obs": self._history_obs_buf[env_ids].copy(),
+                "critic": self._history_critic_buf[env_ids].copy(),
+            }
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
@@ -628,30 +695,33 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         arm_pos = self.get_arm_dof_pos()
         arm_vel = self.get_arm_dof_vel()
 
-        self.armbase_pos_world = self._backend.get_sensor_data(
-            self._cfg.sensor.armbase_world_pos)
-        self.armbase_quat_world = self._backend.get_sensor_data(
-            self._cfg.sensor.arm_ref_world_quat)
+        self.armbase_pos_world = self._backend.get_sensor_data(self._cfg.sensor.armbase_world_pos)
+        self.armbase_quat_world = self._backend.get_sensor_data(self._cfg.sensor.arm_ref_world_quat)
 
         self.armbase_ee_goal = self._world_goal_to_armbase(
-            self.world_ee_goal, self.armbase_pos_world, self.armbase_quat_world)
+            self.world_ee_goal, self.armbase_pos_world, self.armbase_quat_world
+        )
 
         ee_pos_world = self.armbase_pos_world + np_quat_apply_batched(
-            self.armbase_quat_world, ee_local_pos)
+            self.armbase_quat_world, ee_local_pos
+        )
 
-        tilt_sq = gravity[:, 0]**2 + gravity[:, 1]**2
+        tilt_sq = gravity[:, 0] ** 2 + gravity[:, 1] ** 2
         limit_violated = (
             (arm_pos > self._arm_joint_upper) | (arm_pos < self._arm_joint_lower)
         ).any(axis=1)
-        terminated = (tilt_sq > np.sin(1.0)**2) | limit_violated
+        terminated = (tilt_sq > np.sin(1.0) ** 2) | limit_violated
 
         prev_arm_vel_saved = self._prev_arm_vel.copy()
         self._prev_arm_vel = arm_vel.copy()
 
         ctx = _RewardContext(
             info=state.info,
-            linvel=linvel, gyro=gyro, gravity=gravity,
-            arm_pos=arm_pos, arm_vel=arm_vel,
+            linvel=linvel,
+            gyro=gyro,
+            gravity=gravity,
+            arm_pos=arm_pos,
+            arm_vel=arm_vel,
             prev_arm_vel=prev_arm_vel_saved,
             gripper_pos=self.get_gripper_dof_pos(),
             num_envs=self._num_envs,
@@ -667,18 +737,27 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_joint_lower=self._arm_joint_lower,
             joint_limit_margin=0.01,
             ctrl_dt=self._cfg.ctrl_dt,
-            current_actions=state.info.get(
-                "current_actions", np.zeros((self._num_envs, 10))),
+            current_actions=state.info.get("current_actions", np.zeros((self._num_envs, 10))),
         )
 
         reward = self._compute_reward(ctx)
-        obs = self._compute_obs(state.info, linvel, gyro, gravity, arm_pos, arm_vel,
-                                ee_local_pos, self.armbase_ee_goal, add_noise=True)
+        obs = self._compute_obs(
+            state.info,
+            linvel,
+            gyro,
+            gravity,
+            arm_pos,
+            arm_vel,
+            ee_local_pos,
+            self.armbase_ee_goal,
+            add_noise=True,
+        )
         for k in obs:
             obs[k] = np.nan_to_num(obs[k], copy=False, nan=0.0, posinf=0.0, neginf=0.0)
         nan_terminated = np.any(np.isnan(arm_pos), axis=1)
         return state.replace(
-            obs=obs, reward=reward,
+            obs=obs,
+            reward=reward,
             terminated=np.logical_or(terminated, nan_terminated),
         )
 
@@ -700,10 +779,10 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         qw, qx, qy, qz = (_qpos[:, i] for i in range(3, 7))
         yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
         half_yaw = yaw * 0.5
-        _qpos[:, 3] = np.cos(half_yaw)   # qw
-        _qpos[:, 4] = 0.0                 # qx
-        _qpos[:, 5] = 0.0                 # qy
-        _qpos[:, 6] = np.sin(half_yaw)   # qz
+        _qpos[:, 3] = np.cos(half_yaw)  # qw
+        _qpos[:, 4] = 0.0  # qx
+        _qpos[:, 5] = 0.0  # qy
+        _qpos[:, 6] = np.sin(half_yaw)  # qz
 
         # Zero vz, wx, wy (indices 2, 3, 4 in freejoint qvel)
         qvel[:, 2] = 0.0
@@ -717,12 +796,11 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
     def _init_reward_functions(self) -> None:
         self._reward_cfg = self._cfg.reward_config
+
         # Wrap common rewards to map context field names
         def _action_rate_wrapper(ctx):
-            current = ctx.info.get("current_actions",
-                                   np.zeros((ctx.num_envs, 10)))
-            prev = ctx.info.get("last_actions",
-                                np.zeros((ctx.num_envs, 10)))
+            current = ctx.info.get("current_actions", np.zeros((ctx.num_envs, 10)))
+            prev = ctx.info.get("last_actions", np.zeros((ctx.num_envs, 10)))
             return np.sum((current - prev) ** 2, axis=1)
 
         def _similar_to_default_wrapper(ctx):
@@ -759,8 +837,9 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     def _get_projected_gravity(self) -> np.ndarray:
         quat = self._backend.get_sensor_data(self._cfg.sensor.framequat)
         R_wb = np_matrix_from_quat(quat)
-        return np.einsum("nij,j->ni", np.swapaxes(R_wb, 1, 2),
-                          np.array([0.0, 0.0, -1.0], dtype=R_wb.dtype))
+        return np.einsum(
+            "nij,j->ni", np.swapaxes(R_wb, 1, 2), np.array([0.0, 0.0, -1.0], dtype=R_wb.dtype)
+        )
 
     def get_arm_dof_pos(self) -> np.ndarray:
         idx = self._backend.get_joint_dof_pos_indices(self._cfg.asset.arm_joint_names)
@@ -826,10 +905,28 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         q_conj = np_quat_conjugate_batched(armbase_quat)
         return np_quat_apply_batched(q_conj, rel)
 
-    def _compute_obs(self, info, linvel, gyro, gravity, dof_pos, dof_vel,
-                     ee_local_pos, armbase_ee_goal, *, add_noise=True):
+    def _compute_obs(
+        self,
+        info,
+        linvel,
+        gyro,
+        gravity,
+        dof_pos,
+        dof_vel,
+        ee_local_pos,
+        armbase_ee_goal,
+        *,
+        add_noise=True,
+    ):
         raw = self._compute_raw_obs(
-            info, linvel, gyro, gravity, dof_pos, dof_vel,
-            ee_local_pos, armbase_ee_goal, add_noise=add_noise,
+            info,
+            linvel,
+            gyro,
+            gravity,
+            dof_pos,
+            dof_vel,
+            ee_local_pos,
+            armbase_ee_goal,
+            add_noise=add_noise,
         )
         return self._update_history(raw)
