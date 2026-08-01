@@ -49,13 +49,13 @@ env:
     arm_action_scale: 0.01
     arm_max_delta_per_step: 0.05
     terminate_on_arm_limits: false
-    simulate_action_latency: false
+    simulate_action_latency: true
     arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
     arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
     gripper_kp: 50.0
     gripper_kd: 5.0
   noise_config:
-    level: 0.0
+    level: 1.0
     scale_linvel: 0.1
     scale_gyro: 0.2
     scale_gravity: 0.05
@@ -88,8 +88,8 @@ env:
     max_ang_acc: 3.0
     max_latency_steps: 4
     action_noise_scale: 0.05
-    enable_latency: false
-    enable_noise: false
+    enable_latency: true
+    enable_noise: true
     enable_wheel_visualization: true
   domain_rand:
     randomize_kp: true
