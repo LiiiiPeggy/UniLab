@@ -80,6 +80,13 @@ Registry packages declare `__unilab_registry_modules__` to list their bootstrap 
 
 **Backend isolation.** Env code only accesses methods declared on `SimBackend` (in `base/backend/base.py`). If a method only exists on `MuJoCoBackend` or `MotrixBackend`, it must first be added to `SimBackend` (can raise `NotImplementedError`). Never call backend subclass methods or use `getattr`/`hasattr` to probe backend capabilities from env code.
 
+**Mobile manipulator (RangerBoxReach) — A+ base scheme.** `envs/locomotion/ranger_box/` implements a wheeled-base + arm reaching env on a **freejoint kinematics base** (no wheel-ground contact physics). Key invariants learned the hard way:
+- **SE(2) planar lock**: freejoint gives 6-DOF but only vx/vy/yaw are used. Pin z + zero roll/pitch **preserving yaw** via quaternion→yaw→rebuild, not `qpos[:,3:7]=[1,0,0,0]`. Zero vz/wx/wy in qvel. Lock applied pre-physics step in `apply_action`.
+- **Kinematic arm control**: writing arm qpos directly is *not* stable with position actuators on a freejoint base (QACC explosion). Either drive position actuators with `forcelimited`/`forcerange` ctrl, or if writing qpos, do it **after** the physics step and call `backend.forward_sensors()` — direct qpos writes leave `_sensor_data` stale.
+- **MuJoCo state access**: `MuJoCoBackend` uses `_physics_state` / `_qpos_view` (batched), not `_data.qpos`. `forward_sensors()` needs `nstep>=1` (BatchEnv rejects `nstep=0`).
+- **EE sensor frame**: `<framepos>`/`<framequat>` without `reftype`/`refname` return **world-frame** coordinates. For armbase-local EE pose, set `reftype="site" refname="<armbase_site>"`.
+- **Keyframe z must match wheel geometry**: `home` keyframe z is what reset uses (YAML `init_state.pos` does **not** override `_init_qpos`); set it so wheels rest on the floor, not embedded in it.
+
 ### Algorithm landscape
 
 The unified CLI (`uv run train --algo <algo>`) supports: `ppo`, `mlx_ppo`, `appo`, `sac`, `td3`, `flashsac`. APPO supports `--profile hora` for the HORA profile. The following algorithms require running their scripts directly (no CLI support):
@@ -115,7 +122,7 @@ Tests mirror `src/unilab/` structure. Slow tests (tagged `@pytest.mark.slow`) co
 | 区域 | 不可破坏的不变量 |
 |------|----------------|
 | Env  | `NpEnvState.obs` 必须是 dict；`reset()` 返回 `(obs_dict, info_dict)`；`obs_groups_spec` 影响 wrapper 和 learner 维度。 |
-| Config / Reward | reward 通过 Hydra 注入；后端切换必须通过 `task=<task>/<backend>` 选择 owner YAML，`training.sim_backend` 只是 owner YAML 的身份字段，不能单独 override 来切后端。算法超参数直接走 YAML compose，不经 Python 层解释。 |
+| Config / Reward | reward 通过 Hydra 注入；**owner YAML 里用 `reward:` 键**，训练适配器把它变换成 env cfg 的 `reward_config` 字段（不是 `reward_config:`）。后端切换必须通过 `task=<task>/<backend>` 选择 owner YAML，`training.sim_backend` 只是 owner YAML 的身份字段，不能单独 override 来切后端。算法超参数直接走 YAML compose，不经 Python 层解释。 |
 | Backend | backend-specific 逻辑留在 backend / env 适配层，不向训练脚本扩散。env 层只能调用 `SimBackend`（`base.py`）中已声明的方法；若某方法只在 MuJoCo 或 Motrix 中存在，必须先将其加入 `SimBackend` 抽象接口（可抛 `NotImplementedError`），禁止直接在 env 里调用 backend 子类的私有方法（即"功能泄漏/feature leakage"）。新增 backend 专有能力时，需同步更新 `SimBackend`。 |
 | Asset / Metadata | `ASSETS_ROOT_PATH`、`model_file`、XML / asset 元数据只允许在 init / materialization / cache 等低频路径访问；`step/reset/domain randomization` 等热路径不得解析 asset 或基于 asset 元数据做运行时分支。 |
 | Asset / XML structure | `<keyframe>` 必须放在 task-level XML（`scene_*.xml` 或 `locomotion_task.xml` 等 fragment），**禁止放进 robot body XML**（如 `g1.xml`、`go1.xml`）。robot body XML 是纯机器人描述（body / joint / actuator / sensor），跟 task / 场景无关；keyframe 是 task 起始姿态，属于场景或 task 资源。motrix 后端需要 keyframe 时通过 `scene.fragment_files` 引用 fragment XML。 |
@@ -153,7 +160,8 @@ Do not add new owner logic under `src/unilab/utils/`. Current files there are tr
 - APPO: `scripts/train_appo.py`
 - SAC / TD3: `scripts/train_offpolicy.py`
 - env contract: `src/unilab/base/np_env.py`
-- backend contract: `src/unilab/base/backend/base.py`
+- backend contract: `src/unilab/base/backend/base.py` (incl. `set_root_planar_velocity`, `set_joint_qpos/qvel`, `forward_sensors`)
+- mobile manipulator: `src/unilab/envs/locomotion/ranger_box/` (reach_env, base_velocity_controller)
 - training run helpers: `src/unilab/training/run.py`
 - visualization helpers: `src/unilab/visualization/`
 - env shared numeric helpers: `src/unilab/envs/common/rotation.py`, `src/unilab/envs/common/math.py`
