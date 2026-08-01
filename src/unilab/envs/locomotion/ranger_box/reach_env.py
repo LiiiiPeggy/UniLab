@@ -128,6 +128,11 @@ class RangerBoxControlConfig(ControlConfig):
     gripper_kp: float = 50.0
     gripper_kd: float = 5.0
     arm_max_delta_per_step: float = 0.05
+    # Terminate episodes when the arm hits a hard joint limit.  During the
+    # arm-learning stage this kills the learning signal (exploration always
+    # clips a joint), so the staged config can disable it and rely on the
+    # ``arm_joint_limits`` reward penalty instead.
+    terminate_on_arm_limits: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -251,6 +256,21 @@ def build_ranger_box_position_gains(cc: RangerBoxControlConfig) -> dict[str, np.
 # ══════════════════════════════════════════════════════════════════════════
 
 
+@dataclass
+class RangerBoxEEGoalConfig(EEGoalConfig):
+    """RangerBox goal sampling: reachable + extended spherical shells.
+
+    ``reachable_fraction`` of goals are sampled from ``sphere_l_range``
+    (within arm reach), the rest from ``extended_l_range`` (beyond reach,
+    requiring base navigation).  Set ``reachable_fraction`` to 1.0 during the
+    arm-tracking stage so IK never chases an unreachable goal and jams the arm
+    into its joint limits.
+    """
+
+    reachable_fraction: float = 0.30
+    extended_l_range: list[float] = field(default_factory=lambda: [0.5, 1.2])
+
+
 @registry.envcfg("RangerBoxReach")
 @dataclass
 class RangerBoxReachCfg(Go2ArmBaseCfg):
@@ -261,7 +281,7 @@ class RangerBoxReachCfg(Go2ArmBaseCfg):
     control_config: RangerBoxControlConfig = field(default_factory=RangerBoxControlConfig)
     sensor: RangerBoxSensor = field(default_factory=RangerBoxSensor)
     noise_config: RangerBoxNoiseConfig = field(default_factory=RangerBoxNoiseConfig)
-    goal_ee: EEGoalConfig = field(default_factory=EEGoalConfig)
+    goal_ee: RangerBoxEEGoalConfig = field(default_factory=RangerBoxEEGoalConfig)
     ik: IKConfig = field(default_factory=IKConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     arm_stage: ArmStageConfig = field(default_factory=ArmStageConfig)
@@ -707,10 +727,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         )
 
         tilt_sq = gravity[:, 0] ** 2 + gravity[:, 1] ** 2
-        limit_violated = (
-            (arm_pos > self._arm_joint_upper) | (arm_pos < self._arm_joint_lower)
-        ).any(axis=1)
-        terminated = (tilt_sq > np.sin(1.0) ** 2) | limit_violated
+        terminated = tilt_sq > np.sin(1.0) ** 2
+        if self._cfg.control_config.terminate_on_arm_limits:
+            limit_violated = (
+                (arm_pos > self._arm_joint_upper) | (arm_pos < self._arm_joint_lower)
+            ).any(axis=1)
+            terminated = terminated | limit_violated
 
         prev_arm_vel_saved = self._prev_arm_vel.copy()
         self._prev_arm_vel = arm_vel.copy()
@@ -871,23 +893,29 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
         n = len(env_ids)
         rng = np.random
-        reachable = rng.random(n) < 0.30
+        goal_cfg = self._cfg.goal_ee
+        reachable = rng.random(n) < float(goal_cfg.reachable_fraction)
         goals = np.zeros((n, 3), dtype=np.float64)
+
+        l_lo, l_hi = goal_cfg.sphere_l_range
+        phi_lo, phi_hi = goal_cfg.sphere_phi_range
+        th_lo, th_hi = goal_cfg.sphere_theta_range
+        e_lo, e_hi = goal_cfg.extended_l_range
 
         n_reach = int(reachable.sum())
         if n_reach > 0:
-            r = rng.uniform(0.2, 0.5, size=n_reach)
-            phi = rng.uniform(-1.2, 1.0, size=n_reach)
-            theta = rng.uniform(-2.0, 2.0, size=n_reach)
+            r = rng.uniform(l_lo, l_hi, size=n_reach)
+            phi = rng.uniform(phi_lo, phi_hi, size=n_reach)
+            theta = rng.uniform(th_lo, th_hi, size=n_reach)
             goals[reachable, 0] = r * np.cos(phi) * np.cos(theta)
             goals[reachable, 1] = r * np.cos(phi) * np.sin(theta)
             goals[reachable, 2] = r * np.sin(phi)
 
         n_ext = n - n_reach
         if n_ext > 0:
-            r_e = rng.uniform(0.5, 1.2, size=n_ext)
-            phi_e = rng.uniform(-1.2, 1.0, size=n_ext)
-            theta_e = rng.uniform(-2.0, 2.0, size=n_ext)
+            r_e = rng.uniform(e_lo, e_hi, size=n_ext)
+            phi_e = rng.uniform(phi_lo, phi_hi, size=n_ext)
+            theta_e = rng.uniform(th_lo, th_hi, size=n_ext)
             goals[~reachable, 0] = r_e * np.cos(phi_e) * np.cos(theta_e)
             goals[~reachable, 1] = r_e * np.cos(phi_e) * np.sin(theta_e)
             goals[~reachable, 2] = r_e * np.sin(phi_e)
