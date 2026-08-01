@@ -72,7 +72,7 @@ env:
   goal_ee:
     sphere_l_range: [0.20, 0.50]
     extended_l_range: [0.50, 1.20]
-    reachable_fraction: 1.0
+    reachable_fraction: 0.30
     sphere_phi_range: [-1.20, 1.00]
     sphere_theta_range: [-2.00, 2.00]
     traj_time_range: [1.0, 3.0]
