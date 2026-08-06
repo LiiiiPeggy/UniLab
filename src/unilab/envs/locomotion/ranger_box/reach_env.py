@@ -832,6 +832,38 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         def _alive_wrapper(ctx):
             return np.ones(ctx.num_envs)
 
+        # Arm-base clearance reward: soft penalty when EE approaches the base.
+        # Base box centre in armbase-local frame.  The armbase sits at
+        # (0.2462, 0, 0.2765) on the base body; the box centre is at
+        # (0.12, 0, 0.18) in base-local, so the vector from armbase to box
+        # centre is (-0.1262, 0, -0.0965) ≈ (dx, dy, dz) in armbase frame.
+        _BASE_BOX_HALF = np.array([0.55, 0.38, 0.20], dtype=np.float64)
+        _ARM_TO_BOX = np.array([-0.1262, 0.0, -0.0965], dtype=np.float64)
+
+        def _arm_base_clearance_fn(ctx):
+            # Box centre in world frame
+            box_centre_w = ctx.armbase_pos_world + np_quat_apply_batched(
+                ctx.armbase_quat_world,
+                np.broadcast_to(_ARM_TO_BOX, (ctx.num_envs, 3)),
+            )
+            # EE to box-centre vector, in world frame
+            d = ctx.ee_pos_world - box_centre_w
+            # Approximate distance: |d| in each axis minus box half-extent
+            q = np.maximum(np.abs(d) - _BASE_BOX_HALF, 0.0)
+            dist = np.linalg.norm(q, axis=1)
+            margin = 0.05
+            return np.square(np.maximum(margin - dist, 0.0))
+
+        def _arm_base_collision_fn(ctx):
+            box_centre_w = ctx.armbase_pos_world + np_quat_apply_batched(
+                ctx.armbase_quat_world,
+                np.broadcast_to(_ARM_TO_BOX, (ctx.num_envs, 3)),
+            )
+            d = ctx.ee_pos_world - box_centre_w
+            q = np.maximum(np.abs(d) - _BASE_BOX_HALF, 0.0)
+            dist = np.linalg.norm(q, axis=1)
+            return np.square(np.maximum(-dist, 0.0))
+
         self._reward_fns: dict[str, Any] = {
             "ee_distance": _reward_ee_distance,
             "ee_distance_l2": _reward_ee_distance_l2,
@@ -843,6 +875,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             "action_rate": _action_rate_wrapper,
             "similar_to_default": _similar_to_default_wrapper,
             "alive": _alive_wrapper,
+            "arm_base_clearance": _arm_base_clearance_fn,
+            "arm_base_collision": _arm_base_collision_fn,
         }
 
     def _compute_reward(self, ctx: _RewardContext) -> np.ndarray:

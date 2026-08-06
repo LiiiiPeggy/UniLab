@@ -36,6 +36,8 @@ reward:
     base_height: 0.0
     arm_joint_limits: -1.0
     arm_collision: 0.0
+    arm_base_clearance: -2.0
+    arm_base_collision: -5.0
     action_rate: -0.01
     similar_to_default: -0.005
     alive: 0.3
