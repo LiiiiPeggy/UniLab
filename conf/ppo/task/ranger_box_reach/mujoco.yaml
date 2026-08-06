@@ -50,7 +50,9 @@ env:
   control_config:
     arm_action_scale: 0.01
     arm_max_delta_per_step: 0.05
-    terminate_on_arm_limits: false
+    terminate_on_arm_limits: true
+    engage_inner: 0.40
+    engage_outer: 0.70
     simulate_action_latency: true
     arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
     arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]

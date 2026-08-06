@@ -133,6 +133,13 @@ class RangerBoxControlConfig(ControlConfig):
     # clips a joint), so the staged config can disable it and rely on the
     # ``arm_joint_limits`` reward penalty instead.
     terminate_on_arm_limits: bool = True
+    # Arm-engagement gate radii in the armbase frame (meters).
+    # When the EE goal is closer than engage_inner, the arm is fully engaged.
+    # When it is farther than engage_outer, the arm stays near the home pose
+    # and lets the base do the navigation.  Between the two, IK/policy and
+    # home-return are linearly blended.
+    engage_inner: float = 0.40
+    engage_outer: float = 0.70
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -521,6 +528,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             [-3.92, -1.57, -2.86, -3.14, -3.14, -3.14], dtype=np.float64
         )
 
+        # Soft joint limits: 5 % margin inside the hard limits so the
+        # integrated target never saturates at the mechanical stop.
+        _arm_range = self._arm_joint_upper - self._arm_joint_lower
+        self._arm_soft_lower = self._arm_joint_lower + 0.05 * _arm_range
+        self._arm_soft_upper = self._arm_joint_upper - 0.05 * _arm_range
+
         # DR provider
         base_kp, base_kd = (None, None)
         if cfg.domain_rand.randomize_kp or cfg.domain_rand.randomize_kd:
@@ -585,24 +598,40 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ee_local_quat,
         )
 
-        # Integrated arm target: add the policy/IK delta to the persistent
-        # reference, clip, and servo the position actuators toward it.  This
-        # gives the actuators a real spring to a reference pose (instead of
-        # chasing the current qpos, which zeroes the PD error and lets the arm
-        # drift under gravity).  Actuators are forcelimited + forcerange, so
-        # the physics step moves the arm smoothly toward the target with
-        # bounded force.
+        # Arm-engagement gate: blend IK+policy toward the goal vs. return
+        # to home pose, based on the goal distance in the armbase frame.
+        # When the goal is far (beyond engage_outer), the arm stays near
+        # home while the base navigates.  When the goal is close (within
+        # engage_inner), the arm is fully engaged.
+        goal_dist = np.linalg.norm(self.armbase_ee_goal, axis=1)
+        engage_inner = getattr(self._cfg.control_config, "engage_inner", 0.40)
+        engage_outer = getattr(self._cfg.control_config, "engage_outer", 0.70)
+        arm_weight = np.clip(
+            (engage_outer - goal_dist) / max(engage_outer - engage_inner, 1e-6),
+            0.0,
+            1.0,
+        )
+        home_delta = self._default_arm_angles - self._pending_arm_target
+
+        # Integrated arm target: add the weighted policy/IK delta to the
+        # persistent reference, with a home-return component when the goal
+        # is out of reach.  Clipped to soft joint limits (5 % margin inside
+        # the hard limits) so the arm can stay safely away from the stops.
         arm_delta = (
-            arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
-            + self._cfg.ik.gain * dq_ik
+            arm_weight[:, None]
+            * (
+                arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
+                + self._cfg.ik.gain * dq_ik
+            )
+            + (1.0 - arm_weight[:, None]) * 0.02 * home_delta
         )
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
         if max_delta > 0:
             arm_delta = np.clip(arm_delta, -max_delta, max_delta)
         self._pending_arm_target = np.clip(
             self._pending_arm_target + arm_delta,
-            self._ctrl_low[:6],
-            self._ctrl_high[:6],
+            self._arm_soft_lower,
+            self._arm_soft_upper,
         )
         arm_ctrl = self._pending_arm_target
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
@@ -960,6 +989,32 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goals)
         # Clamp goal z above ground level (0.05 m floor + margin)
         goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
+
+        # Exclude goals that fall inside the chassis bounding box.
+        # Transform world goals to base-local, then push any goal that
+        # sits inside or below the chassis top surface upward to the
+        # safe height (chassis top + 0.10 m margin).
+        _CHASSIS_HX, _CHASSIS_HY, _CHASSIS_TOP = 0.55, 0.38, 0.38
+        _CHASSIS_SAFE_Z = _CHASSIS_TOP + 0.10
+        base_pos_w = self._backend.get_base_pos()  # (N, 3)
+        base_quat_w = self._backend.get_base_quat()  # (N, 4)
+        goals_base = np_quat_apply_batched(
+            np_quat_conjugate_batched(base_quat_w[env_ids]),
+            goals_world - base_pos_w[env_ids],
+        )
+        inside = (
+            (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
+            & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
+            & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
+        )
+        if inside.any():
+            # Rejection is complicated (spherical resample); clamp z upward
+            # to the chassis safe height as a pragmatic fallback.
+            goals_base[inside, 2] = _CHASSIS_SAFE_Z
+            goals_world[inside] = base_pos_w[env_ids][inside] + np_quat_apply_batched(
+                base_quat_w[env_ids][inside], goals_base[inside]
+            )
+
         self.world_ee_goal[env_ids] = goals_world
         self._arm_goal_timer[env_ids] = 0
 
