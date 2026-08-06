@@ -176,12 +176,12 @@
   </sensor>
 
   <actuator>
-    <position name="cr10_joint1_act" joint="cr10_joint1" kp="100" ctrlrange="-3.92 0.94" forcelimited="true" forcerange="-20 20"/>
-    <position name="cr10_joint2_act" joint="cr10_joint2" kp="110" ctrlrange="-1.57 1.57" forcelimited="true" forcerange="-20 20"/>
-    <position name="cr10_joint3_act" joint="cr10_joint3" kp="95"  ctrlrange="-2.86 2.86" forcelimited="true" forcerange="-20 20"/>
-    <position name="cr10_joint4_act" joint="cr10_joint4" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-10 10"/>
-    <position name="cr10_joint5_act" joint="cr10_joint5" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-10 10"/>
-    <position name="cr10_joint6_act" joint="cr10_joint6" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-10 10"/>
+    <position name="cr10_joint1_act" joint="cr10_joint1" kp="100" ctrlrange="-3.92 0.94" forcelimited="true" forcerange="-15 15"/>
+    <position name="cr10_joint2_act" joint="cr10_joint2" kp="110" ctrlrange="-1.57 1.57" forcelimited="true" forcerange="-50 50"/>
+    <position name="cr10_joint3_act" joint="cr10_joint3" kp="95"  ctrlrange="-2.86 2.86" forcelimited="true" forcerange="-50 50"/>
+    <position name="cr10_joint4_act" joint="cr10_joint4" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-25 25"/>
+    <position name="cr10_joint5_act" joint="cr10_joint5" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-25 25"/>
+    <position name="cr10_joint6_act" joint="cr10_joint6" kp="50"  ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-25 25"/>
     <position name="gripper_finger1_joint_act" joint="gripper_finger1_joint" kp="50" ctrlrange="0 0.65" forcelimited="true" forcerange="-5 5"/>
   </actuator>
 

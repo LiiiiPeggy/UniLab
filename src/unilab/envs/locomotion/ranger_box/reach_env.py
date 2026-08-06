@@ -611,10 +611,6 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
         self._base_controller.apply_velocity()
 
-        # SE(2) planar lock: pin z, preserve yaw, zero roll/pitch
-        # Done here (pre-physics) so the next backend.step() starts clean.
-        self._apply_se2_lock()
-
         return ctrl.astype(get_global_dtype())
 
     # ── Observation ─────────────────────────────────────────────────
@@ -707,6 +703,11 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     # ── State update ────────────────────────────────────────────────
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
+        # SE(2) planar lock: correct any z/roll/pitch drift that accumulated
+        # during the physics step, THEN refresh sensors so the subsequent
+        # observation/reward reads see the locked state.
+        self._apply_se2_lock()
+
         linvel = self._base_controller.v_real.astype(get_global_dtype())
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()

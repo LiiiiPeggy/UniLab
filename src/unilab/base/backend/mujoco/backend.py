@@ -1373,19 +1373,19 @@ class MuJoCoBackend(SimBackend):
             qvel_view[:, adr] = _np.asarray(values[:, i], dtype=_np.float64)
 
     def forward_sensors(self) -> None:
-        """Recompute sensor data from current physics state."""
+        """Recompute sensor data from current physics state.
+
+        Uses ``pool.forward`` (pure mj_forward, zero integration) so that
+        reading ``_physics_state`` directly and sensors afterwards sees the
+        same kinematic pose.  Unlike the previous ``pool.step(nstep=1)``
+        approach this does NOT advance the simulator, does NOT apply any
+        control impulse, and does NOT leave ``_sensor_data`` one substep
+        ahead of ``_physics_state``.
+        """
+        if self._pool is None:
+            return
         _np = np
-        # nstep must be >= 1; use single step with zero ctrl so
-        # the integrator runs but minimal change (vz etc already zeroed).
-        zero_ctrl = _np.zeros((self._num_envs, 1, self._model.nu), dtype=self._np_dtype)
-        _, sensor_np = self._pool.step(  # type: ignore[union-attr]
-            self._physics_state,
-            nstep=1,
-            control=zero_ctrl,
-            control_spec=int(mujoco.mjtState.mjSTATE_CTRL),
-            return_sensor=True,
-            post_step_forward_sensor=True,
-        )
+        sensor_np = self._pool.forward(self._physics_state)
         self._sensor_data[:] = _np.asarray(sensor_np, dtype=self._np_dtype)
 
     # ------------------------------------------------------------------ #
