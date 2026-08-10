@@ -43,7 +43,7 @@ from unilab.envs.locomotion.go2_arm.manip_loco import (
 )
 from unilab.envs.locomotion.ranger_box.base_velocity_controller import BaseVelocityController
 
-_RAW_OBS_DIM = 41
+_RAW_OBS_DIM = 39
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -329,6 +329,7 @@ class _RewardContext:
     joint_limit_margin: float
     ctrl_dt: float
     current_actions: np.ndarray
+    prev_ee_dist: np.ndarray
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -336,11 +337,15 @@ class _RewardContext:
 # ══════════════════════════════════════════════════════════════════════════
 
 
+def _ee_world_distance(ctx: _RewardContext) -> np.ndarray:
+    """Euclidean distance EE→goal in world frame (used by several terms)."""
+    return np.linalg.norm(ctx.ee_pos_world - ctx.world_ee_goal, axis=1)
+
+
 def _reward_ee_distance(ctx: _RewardContext) -> np.ndarray:
-    diff = ctx.ee_pos_world - ctx.world_ee_goal
-    d2 = np.sum(diff * diff, axis=1)
+    d = _ee_world_distance(ctx)
     sigma2 = ctx.sigma_ee * ctx.sigma_ee
-    return np.exp(-d2 / sigma2)
+    return np.exp(-(d * d) / sigma2)
 
 
 def _reward_ee_distance_l2(ctx: _RewardContext) -> np.ndarray:
@@ -348,8 +353,28 @@ def _reward_ee_distance_l2(ctx: _RewardContext) -> np.ndarray:
     return np.sum(diff * diff, axis=1)
 
 
+def _reward_ee_progress(ctx: _RewardContext) -> np.ndarray:
+    d = _ee_world_distance(ctx)
+    progress = (ctx.prev_ee_dist - d) / ctx.ctrl_dt
+    return np.maximum(progress, 0.0)
+
+
+def _reward_success_10cm(ctx: _RewardContext) -> np.ndarray:
+    return (_ee_world_distance(ctx) < 0.10).astype(np.float64)
+
+
+def _reward_success_05cm(ctx: _RewardContext) -> np.ndarray:
+    return (_ee_world_distance(ctx) < 0.05).astype(np.float64)
+
+
 def _reward_base_vel_xy(ctx: _RewardContext) -> np.ndarray:
     return ctx.linvel[:, 0] ** 2 + ctx.linvel[:, 1] ** 2
+
+
+def _reward_base_stop_near(ctx: _RewardContext) -> np.ndarray:
+    d = _ee_world_distance(ctx)
+    near = np.exp(-((d / 0.20) ** 2))
+    return (ctx.linvel[:, 0] ** 2 + ctx.linvel[:, 1] ** 2) * near
 
 
 def _reward_base_vel_yaw(ctx: _RewardContext) -> np.ndarray:
@@ -408,6 +433,7 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
         env._history_obs_buf[env_ids] = 0.0
         env._history_critic_buf[env_ids] = 0.0
         env._prev_arm_vel[env_ids] = 0.0
+        env._prev_ee_dist[env_ids] = 1.0  # large init: first progress reward ≈ 0
         env._pending_arm_target[env_ids] = env._default_arm_angles
         env._base_controller.reset(env_ids, np.random.default_rng())
         return plan
@@ -478,7 +504,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         backend = create_backend(backend_type, scene, num_envs, cfg.sim_dt, **backend_kwargs)
         super().__init__(cfg, backend, num_envs)
 
-        self._num_action = 10
+        self._num_action = 9
 
         ctrl_range = self._backend.get_actuator_ctrl_range()
         self._ctrl_low = np.asarray(ctrl_range[:, 0], dtype=np.float64)
@@ -501,6 +527,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         self.armbase_quat_world = np.zeros((num_envs, 4), dtype=np.float64)
 
         self._prev_arm_vel = np.zeros((num_envs, 6), dtype=np.float64)
+        self._prev_ee_dist = np.zeros(num_envs, dtype=np.float64)
         self._arm_goal_timer = np.zeros((num_envs,), dtype=np.int32)
 
         H_a = cfg.history.num_actor_history
@@ -560,7 +587,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
     def _init_action_space(self) -> None:
         import gymnasium as gym
 
-        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(10,), dtype=np.float32)
+        self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(9,), dtype=np.float32)
 
     def _init_buffers(self) -> None:
         dtype = get_global_dtype()
@@ -580,10 +607,10 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         self._base_controller.step(actions[:, 0:3])
 
-        arm_gripper_action = (
-            state.info["last_actions"][:, 3:10]
+        arm_action = (
+            state.info["last_actions"][:, 3:9]
             if self._cfg.control_config.simulate_action_latency
-            else actions[:, 3:10]
+            else actions[:, 3:9]
         )
 
         self.armbase_ee_goal = self._world_goal_to_armbase(
@@ -619,10 +646,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # the hard limits) so the arm can stay safely away from the stops.
         arm_delta = (
             arm_weight[:, None]
-            * (
-                arm_gripper_action[:, 0:6] * self._cfg.control_config.arm_action_scale
-                + self._cfg.ik.gain * dq_ik
-            )
+            * (arm_action * self._cfg.control_config.arm_action_scale + self._cfg.ik.gain * dq_ik)
             + (1.0 - arm_weight[:, None]) * 0.02 * home_delta
         )
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
@@ -672,13 +696,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ee_local_pos = self._obs_noise(ee_local_pos, noise_cfg.scale_ee_pos)
             armbase_ee_goal = self._obs_noise(armbase_ee_goal, noise_cfg.scale_ee_goal)
 
-        last_actions = info.get("current_actions", np.zeros((n, 10), dtype=get_global_dtype()))
+        last_actions = info.get("current_actions", np.zeros((n, 9), dtype=get_global_dtype()))
         ee_error = armbase_ee_goal - ee_local_pos
-        # gripper_pos: ensure shape matches batch size
-        raw_gripper = self._backend.get_dof_pos()[:, self._gripper_dof_pos_idx]
-        if raw_gripper.shape[0] != n:
-            raw_gripper = raw_gripper[:n]
-        gripper_pos = raw_gripper
 
         return np.concatenate(
             [
@@ -690,8 +709,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
                 ee_local_pos.astype(get_global_dtype()),  # 3
                 armbase_ee_goal.astype(get_global_dtype()),  # 3
                 ee_error.astype(get_global_dtype()),  # 3
-                gripper_pos.astype(get_global_dtype()),  # 1
-                last_actions.astype(get_global_dtype()),  # 10
+                last_actions.astype(get_global_dtype()),  # 9
             ],
             axis=1,
         )
@@ -737,7 +755,9 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # observation/reward reads see the locked state.
         self._apply_se2_lock()
 
-        linvel = self._base_controller.v_real.astype(get_global_dtype())
+        linvel = self._backend.get_sensor_data(self._cfg.sensor.local_linvel).astype(
+            get_global_dtype()
+        )
         gyro = self.get_gyro()
         gravity = self._get_projected_gravity()
 
@@ -789,8 +809,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_joint_lower=self._arm_joint_lower,
             joint_limit_margin=0.01,
             ctrl_dt=self._cfg.ctrl_dt,
-            current_actions=state.info.get("current_actions", np.zeros((self._num_envs, 10))),
+            current_actions=state.info.get("current_actions", np.zeros((self._num_envs, 9))),
+            prev_ee_dist=self._prev_ee_dist,
         )
+
+        # Track EE distance for next step's progress reward
+        self._prev_ee_dist = _ee_world_distance(ctx)
 
         reward = self._compute_reward(ctx)
         obs = self._compute_obs(
@@ -851,52 +875,64 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         # Wrap common rewards to map context field names
         def _action_rate_wrapper(ctx):
-            current = ctx.info.get("current_actions", np.zeros((ctx.num_envs, 10)))
-            prev = ctx.info.get("last_actions", np.zeros((ctx.num_envs, 10)))
+            current = ctx.info.get("current_actions", np.zeros((ctx.num_envs, 9)))
+            prev = ctx.info.get("last_actions", np.zeros((ctx.num_envs, 9)))
             return np.sum((current - prev) ** 2, axis=1)
 
         def _similar_to_default_wrapper(ctx):
             return np.sum(np.abs(ctx.arm_pos - ctx.default_arm_angles), axis=1)
 
         def _alive_wrapper(ctx):
-            return np.ones(ctx.num_envs)
+            return np.zeros(ctx.num_envs)  # disabled: no task-independent reward
 
-        # Arm-base clearance reward: soft penalty when EE approaches the base.
-        # Base box centre in armbase-local frame.  The armbase sits at
-        # (0.2462, 0, 0.2765) on the base body; the box centre is at
-        # (0.12, 0, 0.18) in base-local, so the vector from armbase to box
-        # centre is (-0.1262, 0, -0.0965) ≈ (dx, dy, dz) in armbase frame.
+        # Arm-base clearance / collision reward using proper signed distance
+        # to the base collision box (0.55×0.38×0.20 m in base-local).
+        # Checks EE + midpoint (armbase→EE) as a two-point proxy for the arm.
         _BASE_BOX_HALF = np.array([0.55, 0.38, 0.20], dtype=np.float64)
-        _ARM_TO_BOX = np.array([-0.1262, 0.0, -0.0965], dtype=np.float64)
+
+        def _arm_point_signed_dist(p_w, box_centre_w, base_quat_w):
+            """Signed distance from point(s) to axis-aligned base box in base frame."""
+            p_local = np_quat_apply_batched(
+                np_quat_conjugate_batched(base_quat_w),
+                p_w - box_centre_w,
+            )
+            q = np.abs(p_local) - _BASE_BOX_HALF
+            outside = np.linalg.norm(np.maximum(q, 0.0), axis=1)
+            inside = np.minimum(np.max(q, axis=1), 0.0)
+            return outside + inside  # >0 outside, <0 inside
 
         def _arm_base_clearance_fn(ctx):
-            # Box centre in world frame
-            box_centre_w = ctx.armbase_pos_world + np_quat_apply_batched(
-                ctx.armbase_quat_world,
-                np.broadcast_to(_ARM_TO_BOX, (ctx.num_envs, 3)),
-            )
-            # EE to box-centre vector, in world frame
-            d = ctx.ee_pos_world - box_centre_w
-            # Approximate distance: |d| in each axis minus box half-extent
-            q = np.maximum(np.abs(d) - _BASE_BOX_HALF, 0.0)
-            dist = np.linalg.norm(q, axis=1)
+            base_pos_w = ctx.armbase_pos_world
+            base_quat_w = ctx.armbase_quat_world
+            box_centre_w = base_pos_w  # armbase is now on the base body, box centred near it
+            # Check EE point
+            sd_ee = _arm_point_signed_dist(ctx.ee_pos_world, box_centre_w, base_quat_w)
+            # Check midpoint (armbase→EE) as rough arm-body proxy
+            mid_w = 0.5 * (base_pos_w + ctx.ee_pos_world)
+            sd_mid = _arm_point_signed_dist(mid_w, box_centre_w, base_quat_w)
+            sd = np.minimum(sd_ee, sd_mid)
             margin = 0.05
-            return np.square(np.maximum(margin - dist, 0.0))
+            return np.square(np.maximum(margin - sd, 0.0))
 
         def _arm_base_collision_fn(ctx):
-            box_centre_w = ctx.armbase_pos_world + np_quat_apply_batched(
-                ctx.armbase_quat_world,
-                np.broadcast_to(_ARM_TO_BOX, (ctx.num_envs, 3)),
-            )
-            d = ctx.ee_pos_world - box_centre_w
-            q = np.maximum(np.abs(d) - _BASE_BOX_HALF, 0.0)
-            dist = np.linalg.norm(q, axis=1)
-            return np.square(np.maximum(-dist, 0.0))
+            base_pos_w = ctx.armbase_pos_world
+            base_quat_w = ctx.armbase_quat_world
+            box_centre_w = base_pos_w
+            sd_ee = _arm_point_signed_dist(ctx.ee_pos_world, box_centre_w, base_quat_w)
+            mid_w = 0.5 * (base_pos_w + ctx.ee_pos_world)
+            sd_mid = _arm_point_signed_dist(mid_w, box_centre_w, base_quat_w)
+            sd = np.minimum(sd_ee, sd_mid)
+            penetration = np.maximum(-sd, 0.0)
+            return penetration * penetration
 
         self._reward_fns: dict[str, Any] = {
             "ee_distance": _reward_ee_distance,
             "ee_distance_l2": _reward_ee_distance_l2,
+            "ee_progress": _reward_ee_progress,
+            "success_10cm": _reward_success_10cm,
+            "success_05cm": _reward_success_05cm,
             "base_vel_xy": _reward_base_vel_xy,
+            "base_stop_near_goal": _reward_base_stop_near,
             "base_vel_yaw": _reward_base_vel_yaw,
             "arm_dof_vel": _reward_arm_dof_vel,
             "arm_dof_acc": _reward_arm_dof_acc,
@@ -990,30 +1026,57 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # Clamp goal z above ground level (0.05 m floor + margin)
         goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
 
-        # Exclude goals that fall inside the chassis bounding box.
-        # Transform world goals to base-local, then push any goal that
-        # sits inside or below the chassis top surface upward to the
-        # safe height (chassis top + 0.10 m margin).
-        _CHASSIS_HX, _CHASSIS_HY, _CHASSIS_TOP = 0.55, 0.38, 0.38
-        _CHASSIS_SAFE_Z = _CHASSIS_TOP + 0.10
         base_pos_w = self._backend.get_base_pos()  # (N, 3)
         base_quat_w = self._backend.get_base_quat()  # (N, 4)
-        goals_base = np_quat_apply_batched(
-            np_quat_conjugate_batched(base_quat_w[env_ids]),
-            goals_world - base_pos_w[env_ids],
-        )
-        inside = (
-            (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
-            & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
-            & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
-        )
-        if inside.any():
-            # Rejection is complicated (spherical resample); clamp z upward
-            # to the chassis safe height as a pragmatic fallback.
-            goals_base[inside, 2] = _CHASSIS_SAFE_Z
-            goals_world[inside] = base_pos_w[env_ids][inside] + np_quat_apply_batched(
-                base_quat_w[env_ids][inside], goals_base[inside]
+        # Rejection-sample goals that fall inside the chassis bounding box.
+        # Retry up to 10 times; if still inside, clamp to safe height as
+        # last-resort fallback.
+        _CHASSIS_HX, _CHASSIS_HY, _CHASSIS_SAFE_Z = 0.55, 0.38, 0.48
+        for _attempt in range(10):
+            goals_base = np_quat_apply_batched(
+                np_quat_conjugate_batched(base_quat_w[env_ids]),
+                goals_world - base_pos_w[env_ids],
             )
+            inside = (
+                (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
+                & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
+                & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
+            )
+            if not inside.any():
+                break
+            n_bad = inside.sum()
+            r_new = rng.uniform(l_lo, l_hi, size=n_bad)
+            phi_new = rng.uniform(phi_lo, phi_hi, size=n_bad)
+            theta_new = rng.uniform(th_lo, th_hi, size=n_bad)
+            new = np.stack(
+                [
+                    r_new * np.cos(phi_new) * np.cos(theta_new),
+                    r_new * np.cos(phi_new) * np.sin(theta_new),
+                    r_new * np.sin(phi_new),
+                ],
+                axis=1,
+            )
+            goals[inside] = new
+            goals_world[inside] = armbase_pos[inside] + np_quat_apply_batched(
+                armbase_quat[inside], new
+            )
+            goals_world[inside, 2] = np.maximum(goals_world[inside, 2], 0.15)
+        else:
+            # Fallback: clamp remaining inside-goals z upward
+            goals_base = np_quat_apply_batched(
+                np_quat_conjugate_batched(base_quat_w[env_ids]),
+                goals_world - base_pos_w[env_ids],
+            )
+            inside = (
+                (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
+                & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
+                & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
+            )
+            if inside.any():
+                goals_base[inside, 2] = _CHASSIS_SAFE_Z
+                goals_world[inside] = base_pos_w[env_ids][inside] + np_quat_apply_batched(
+                    base_quat_w[env_ids][inside], goals_base[inside]
+                )
 
         self.world_ee_goal[env_ids] = goals_world
         self._arm_goal_timer[env_ids] = 0

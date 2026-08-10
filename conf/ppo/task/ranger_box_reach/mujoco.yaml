@@ -6,14 +6,16 @@ training:
 algo:
   num_envs: 256
   num_steps_per_env: 128
-  max_iterations: 2000
+  max_iterations: 1000
   empirical_normalization: true
   obs_groups:
     actor:
       - actor
+    critic:
+      - critic
 
   policy:
-    init_noise_std: 0.5
+    init_noise_std: 0.3
     actor_hidden_dims: [256, 128, 64]
     critic_hidden_dims: [256, 128, 64]
 
@@ -24,29 +26,33 @@ algo:
 
 reward:
   scales:
-    ee_distance: 4.0
-    ee_distance_l2: -1.0
-    base_vel_xy: -0.05
+    ee_distance: 3.0
+    ee_distance_l2: -0.5
+    ee_progress: 1.0
+    success_10cm: 2.0
+    success_05cm: 1.0
+    base_vel_xy: -0.01
+    base_stop_near_goal: -0.10
     base_vel_z: 0.0
-    base_vel_yaw: -0.01
+    base_vel_yaw: -0.005
     arm_dof_vel: -0.001
     arm_dof_acc: -1.0e-6
+    arm_joint_limits: -1.0
+    arm_collision: 0.0
+    arm_base_clearance: -5.0
+    arm_base_collision: -10.0
     torques: 0.0
     base_orientation: 0.0
     base_height: 0.0
-    arm_joint_limits: -1.0
-    arm_collision: 0.0
-    arm_base_clearance: -2.0
-    arm_base_collision: -5.0
-    action_rate: -0.01
-    similar_to_default: -0.005
-    alive: 0.3
-  sigma_ee: 0.15
+    action_rate: -0.005
+    similar_to_default: -0.002
+    alive: 0.0
+  sigma_ee: 0.20
 
 env:
   max_episode_seconds: 10.0
   init_state:
-    pos: [0.0, 0.0, 0.278]
+    pos: [0.0, 0.0, 0.415]
   control_config:
     arm_action_scale: 0.01
     arm_max_delta_per_step: 0.05
@@ -96,21 +102,21 @@ env:
     enable_noise: true
     enable_wheel_visualization: true
   domain_rand:
-    randomize_kp: true
+    randomize_kp: false
     kp_multiplier_range: [0.9, 1.1]
-    randomize_kd: true
+    randomize_kd: false
     kd_multiplier_range: [0.9, 1.1]
-    randomize_body_mass: true
+    randomize_body_mass: false
     body_mass_multiplier_range: [0.9, 1.1]
-    random_com: true
+    random_com: false
     com_offset_x: [-0.03, 0.03]
     randomize_ground_friction: false
-    randomize_dof_armature: true
+    randomize_dof_armature: false
     dof_armature_multiplier_range: [0.8, 1.2]
     push_robots: false
   history:
-    num_actor_history: 1
-    num_critic_history: 1
+    num_actor_history: 5
+    num_critic_history: 5
   arm_stage:
     freeze_arm_joints: false
     disable_ee_goal_trajectory: false

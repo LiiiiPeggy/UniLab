@@ -54,6 +54,7 @@
       <geom name="base_collision" class="base_collision" type="box"
             pos="0.12 0 0.18" size="0.55 0.38 0.20"/>
 
+      <site name="armbasepoint" pos="0.2462 0 0.2765" size="0.01" rgba="1 0 0 1" group="2" />
       <site name="imu" pos="0 0 0.1" size="0.01" rgba="0 1 0 1" group="2" />
 
       <body name="fr_steering_link" pos="0.445 -0.28 0.0335">
@@ -103,7 +104,6 @@
         <geom type="mesh" rgba="1 1 1 1" mesh="Link1" class="visual" />
         <geom name="link1_collision" class="arm_collision" type="box"
               pos="0 0 0" size="0.08 0.10 0.10"/>
-        <site name="armbasepoint" pos="0 0 0" size="0.01" rgba="1 0 0 1" group="2" />
         <body gravcomp="1" name="cr10_Link2" quat="0.499998 0.5 0.5 -0.500002">
           <inertial pos="-0.24631 3.5816e-07 0.19515" quat="0.503124 0.496855 0.49686 0.503122" mass="11.314" diaginertia="0.30683 0.299762 0.0335742" />
           <joint name="cr10_joint2" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" />

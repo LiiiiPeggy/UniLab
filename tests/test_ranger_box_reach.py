@@ -174,18 +174,18 @@ class TestRangerBoxReachEnv:
         env.close()
 
     def test_env_creates(self, env4):
-        assert env4._num_action == 10
-        assert env4.obs_groups_spec["obs"] == 41
+        assert env4._num_action == 9
+        assert env4.obs_groups_spec["obs"] == 39
 
     def test_reset_returns_obs_dict(self, env4):
         obs, info = env4.reset(np.arange(4))
         assert isinstance(obs, dict)
-        assert obs["obs"].shape == (4, 41)
+        assert obs["obs"].shape == (4, 39)
 
     def test_action_to_ctrl_shape(self, env4):
         state = env4.init_state()
-        state.info["current_actions"] = np.zeros((4, 10))
-        ctrl = env4.apply_action(np.zeros((4, 10)), state)
+        state.info["current_actions"] = np.zeros((4, 9))
+        ctrl = env4.apply_action(np.zeros((4, 9)), state)
         assert ctrl.shape == (4, 7)
 
     def test_world_ee_goal_set_after_reset(self, env4):
@@ -220,7 +220,7 @@ class TestRangerBoxReachEnv:
         env4.reset(np.arange(4))
         env4._base_controller.latency_steps[:] = [0, 1, 3, 4]
         # Step with max actions — verifies no crash with mixed latency
-        state = env4.step(np.ones((4, 10)))
+        state = env4.step(np.ones((4, 9)))
         assert state.reward.shape == (4,)
 
     def test_history_h3(self):
@@ -230,13 +230,13 @@ class TestRangerBoxReachEnv:
         cfg.history.num_critic_history = 3
         env = RangerBoxReachEnv(cfg, num_envs=2, backend_type="mujoco")
         obs, _ = env.reset(np.arange(2))
-        assert obs["obs"].shape == (2, 3 * 41)
+        assert obs["obs"].shape == (2, 3 * 39)
         env.close()
 
     def test_dr_reset(self, env4):
         env4.reset(np.arange(4))
         for _ in range(5):
-            state = env4.step(np.zeros((4, 10)))
+            state = env4.step(np.zeros((4, 9)))
             if state.terminated.any():
                 env4.reset(np.where(state.terminated)[0])
         # No crash = success
