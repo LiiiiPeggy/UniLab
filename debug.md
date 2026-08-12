@@ -1,74 +1,43 @@
-################################################################################
-                          Learning iteration 1998/2000                           
+# RangerBoxReach 训练记录
 
-                            Total steps: 65503232 
-                       Steps per second: 39945 
-                        Collection time: 0.767s 
-                          Learning time: 0.053s 
-                        Mean value loss: 0.0103
-                    Mean surrogate loss: -0.0128
-                      Mean entropy loss: -10.5983
-                            Mean reward: 8.44
-                    Mean episode length: 500.00
-                        Mean action std: 0.10
---------------------------------------------------------------------------------
-                         Iteration time: 0.82s
-                           Time elapsed: 00:27:13
-                                    ETA: 00:00:00
+## Run 2 — 建模/奖励重设计后（2026-08-11）
 
-################################################################################
-                          Learning iteration 1999/2000                           
+提交 `f8c3e6e9`：armbasepoint 移到 base body、signed-distance 碰撞奖励、
+action 10→9 / obs 41→39、velocimeter linvel、progress+success+stop-near 奖励、
+alive=0、goal rejection sampling、history=5、obs_groups 加 critic。
 
-                            Total steps: 65536000 
-                       Steps per second: 39843 
-                        Collection time: 0.770s 
-                          Learning time: 0.053s 
-                        Mean value loss: 0.0101
-                    Mean surrogate loss: -0.0122
-                      Mean entropy loss: -10.6037
-                            Mean reward: 7.15
-                    Mean episode length: 500.00
-                        Mean action std: 0.10
---------------------------------------------------------------------------------
-                         Iteration time: 0.82s
-                           Time elapsed: 00:27:14
-                                    ETA: 00:00:00
+```
+Final (iter 999/1000):
+  Total steps:        32768000
+  Steps per second:   39119
+  Mean value loss:    0.0139
+  Mean entropy loss:  -6.8991
+  Mean reward:        3.71   (best: 45.50)
+  Mean episode length: 500.00
+  Mean action std:    0.12
+  Time elapsed:       00:13:56  (837.7s wall)
+  Actor:  195 → [256,128,64] → 9   (obs = 39 × history 5)
+  Critic: 195 → [256,128,64] → 1
+```
 
-Loading latest model: /home/ubuntu/locomani/UniLab/logs/rsl_rl_ppo/RangerBoxReach/2026-08-06_17-29-05_mujoco/model_1999.pt
-/home/ubuntu/locomani/UniLab/.venv/lib/python3.10/site-packages/rsl_rl/utils/utils.py:243: UserWarning: The observation configuration dictionary 'obs_groups' does not contain the 'critic' key. As an observation group with the name 'critic' was found, this is assumed to be the appropriate observation. Consider adding the 'critic' key to the 'obs_groups' dictionary for clarity. This behavior will be removed in a future version.
-  warnings.warn(
---------------------------------------------------------------------------------
-Resolved observation sets: 
-	 default :  ['policy']
-	 actor :  ['actor']
-	 critic :  ['critic']
---------------------------------------------------------------------------------
-Actor Model: MLPModel(
-  (obs_normalizer): EmpiricalNormalization()
-  (distribution): GaussianDistribution()
-  (mlp): MLP(
-    (0): Linear(in_features=41, out_features=256, bias=True)
-    (1): ELU(alpha=1.0)
-    (2): Linear(in_features=256, out_features=128, bias=True)
-    (3): ELU(alpha=1.0)
-    (4): Linear(in_features=128, out_features=64, bias=True)
-    (5): ELU(alpha=1.0)
-    (6): Linear(in_features=64, out_features=10, bias=True)
-  )
-)
-Critic Model: MLPModel(
-  (obs_normalizer): EmpiricalNormalization()
-  (mlp): MLP(
-    (0): Linear(in_features=41, out_features=256, bias=True)
-    (1): ELU(alpha=1.0)
-    (2): Linear(in_features=256, out_features=128, bias=True)
-    (3): ELU(alpha=1.0)
-    (4): Linear(in_features=128, out_features=64, bias=True)
-    (5): ELU(alpha=1.0)
-    (6): Linear(in_features=64, out_features=1, bias=True)
-  )
-)
-Rendering video to /home/ubuntu/locomani/UniLab/logs/rsl_rl_ppo/RangerBoxReach/2026-08-06_17-29-05_mujoco/play_video.mp4...
-Rendering playback frames...
-Rendering 200 frames for 16 envs with 8 processes...
-Done.
+### 结论
+- 网络 I/O 正确（195=39×5 obs，9 action），无 critic 警告。
+- mean reward 3.71 远低于旧 2000-iter 的 7~8，但这是**去除 alive=0.3 之后
+  的真实任务 reward**（旧值约 40% 是无信息固定奖励），数值不可直接比较。
+- best reward 45.50 显著高于旧 best 34.7，说明新 reward 结构下策略确实
+  学到了更强的 reaching 行为。
+- action std 0.12、value loss 0.0139、episode 稳定 500，训练收敛无发散。
+- 仍缺 episode success rate / EE distance / 碰撞率等硬指标，下轮 eval 补齐。
+
+---
+
+## Run 1 — 修复前 baseline（2026-08-06）
+
+```
+Final (iter 1998/1999):
+  Mean reward:        8.44 / 7.15
+  Mean episode length: 500.00
+  Mean action std:    0.10
+  Actor: 41 → 10, Critic: 41 → 1  (history=1, 无 critic key 警告)
+```
+该 run 基于可穿模+会下垂的错误动力学，仅作行为参考。
