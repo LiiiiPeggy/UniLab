@@ -28,7 +28,7 @@ reward:
   scales:
     ee_distance: 3.0
     ee_distance_l2: -0.5
-    ee_progress: 1.0
+    ee_progress: 5.0
     success_10cm: 2.0
     success_05cm: 1.0
     base_vel_xy: -0.01
@@ -55,17 +55,17 @@ env:
     pos: [0.0, 0.0, 0.415]
   control_config:
     arm_action_scale: 0.01
-    arm_max_delta_per_step: 0.05
+    arm_max_delta_per_step: 0.01
     terminate_on_arm_limits: true
     engage_inner: 0.40
     engage_outer: 0.70
-    simulate_action_latency: true
+    simulate_action_latency: false
     arm_kp: [100.0, 110.0, 95.0, 50.0, 50.0, 50.0]
     arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
     gripper_kp: 50.0
     gripper_kd: 5.0
   noise_config:
-    level: 1.0
+    level: 0.0
     scale_linvel: 0.1
     scale_gyro: 0.2
     scale_gravity: 0.05
@@ -75,8 +75,8 @@ env:
     scale_ee_goal: 0.01
   ik:
     damping: 0.05
-    gain: 0.5
-    dq_clip: 0.05
+    gain: 0.2
+    dq_clip: 0.03
     use_orientation: false
     orientation_mode: target
   goal_ee:
@@ -98,9 +98,9 @@ env:
     max_ang_acc: 3.0
     max_latency_steps: 4
     action_noise_scale: 0.05
-    enable_latency: true
-    enable_noise: true
-    enable_wheel_visualization: true
+    enable_latency: false
+    enable_noise: false
+    enable_wheel_visualization: false
   domain_rand:
     randomize_kp: false
     kp_multiplier_range: [0.9, 1.1]

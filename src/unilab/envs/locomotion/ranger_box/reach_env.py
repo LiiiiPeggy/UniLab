@@ -103,6 +103,14 @@ class RangerBoxSensor(Go2ArmSensor):
     ee_local_quat: str = "endpoint-framequat"
     arm_ref_world_quat: str = "armbasepoint-framequat"
     armbase_world_pos: str = "armbasepoint-framepos"
+    # World-frame body positions of arm links (for arm-base clearance).
+    link_pos: tuple[str, ...] = (
+        "link2-framepos",
+        "link3-framepos",
+        "link4-framepos",
+        "link5-framepos",
+        "link6-framepos",
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -140,6 +148,8 @@ class RangerBoxControlConfig(ControlConfig):
     # home-return are linearly blended.
     engage_inner: float = 0.40
     engage_outer: float = 0.70
+    # Home-return gain (per step) when the goal is outside the engagement gate.
+    home_return_gain: float = 0.02
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -354,9 +364,11 @@ def _reward_ee_distance_l2(ctx: _RewardContext) -> np.ndarray:
 
 
 def _reward_ee_progress(ctx: _RewardContext) -> np.ndarray:
+    # Signed progress: positive when EE approaches the goal, negative when it
+    # moves away.  Deliberately NOT clipped at zero — clipping allows a policy
+    # to oscillate and harvest progress repeatedly (reward hacking).
     d = _ee_world_distance(ctx)
-    progress = (ctx.prev_ee_dist - d) / ctx.ctrl_dt
-    return np.maximum(progress, 0.0)
+    return ctx.prev_ee_dist - d
 
 
 def _reward_success_10cm(ctx: _RewardContext) -> np.ndarray:
@@ -433,8 +445,11 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
         env._history_obs_buf[env_ids] = 0.0
         env._history_critic_buf[env_ids] = 0.0
         env._prev_arm_vel[env_ids] = 0.0
-        env._prev_ee_dist[env_ids] = 1.0  # large init: first progress reward ≈ 0
-        env._pending_arm_target[env_ids] = env._default_arm_angles
+        env._ik_target[env_ids] = env._default_arm_angles
+        env._success_hold_timer[env_ids] = 0
+        env._success_once[env_ids] = False
+        env._success_hold[env_ids] = False
+        env._steps_to_success[env_ids] = 0
         env._base_controller.reset(env_ids, np.random.default_rng())
         return plan
 
@@ -455,6 +470,13 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
             env.armbase_pos_world[env_ids],
             env.armbase_quat_world[env_ids],
         )
+        # Initialize prev_ee_dist from the real EE→goal distance so the first
+        # control step does not fabricate a spurious progress reward.
+        ee_local_pos0, _ = env.get_ee_local_pose()
+        ee_world0 = env.armbase_pos_world[env_ids] + np_quat_apply_batched(
+            env.armbase_quat_world[env_ids], ee_local_pos0[env_ids]
+        )
+        env._prev_ee_dist[env_ids] = np.linalg.norm(ee_world0 - env.world_ee_goal[env_ids], axis=1)
         sliced_info: dict = {}
         for k, v in info_updates.items():
             if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == env._num_envs:
@@ -530,6 +552,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         self._prev_ee_dist = np.zeros(num_envs, dtype=np.float64)
         self._arm_goal_timer = np.zeros((num_envs,), dtype=np.int32)
 
+        # Success tracking (for held-success early termination + eval metrics).
+        self._success_hold_timer = np.zeros((num_envs,), dtype=np.int32)
+        self._success_once = np.zeros((num_envs,), dtype=bool)
+        self._success_hold = np.zeros((num_envs,), dtype=bool)
+        self._steps_to_success = np.zeros((num_envs,), dtype=np.int32)
+
         H_a = cfg.history.num_actor_history
         H_c = cfg.history.num_critic_history
         self._history_obs_buf = np.zeros((num_envs, H_a * _RAW_OBS_DIM), dtype=get_global_dtype())
@@ -539,14 +567,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         self._default_arm_angles = self.default_angles[:6].copy()
 
-        # Integrated arm target reference (rad), initialized to the default
-        # pose.  Each step the policy action / IK delta is added to it, and the
-        # position actuators servo toward it.  Deliberately NOT "target =
-        # current qpos": chasing the current position gives the position
-        # actuator zero steady-state error, degenerating it into a pure damper
-        # with no restoring spring, so the arm drifts under gravity to its
-        # joint limits.
-        self._pending_arm_target = (
+        # Persistent IK-only arm target reference (rad).  Only the IK delta and
+        # the home-return term are integrated here.  The RL policy residual is
+        # applied as an instantaneous offset on top of this target and is NOT
+        # integrated — integrating it would accumulate DC bias (a small
+        # constant action would steadily creep the target, mimicking arm sag).
+        self._ik_target = (
             np.broadcast_to(self._default_arm_angles, (num_envs, 6)).astype(np.float64).copy()
         )
 
@@ -625,11 +651,11 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ee_local_quat,
         )
 
-        # Arm-engagement gate: blend IK+policy toward the goal vs. return
-        # to home pose, based on the goal distance in the armbase frame.
-        # When the goal is far (beyond engage_outer), the arm stays near
-        # home while the base navigates.  When the goal is close (within
-        # engage_inner), the arm is fully engaged.
+        # Arm-engagement gate: blend IK toward the goal vs. return to home,
+        # based on the goal distance in the armbase frame.  When the goal is
+        # far (beyond engage_outer), the arm stays near home while the base
+        # navigates.  When the goal is close (within engage_inner), IK is
+        # fully engaged.
         goal_dist = np.linalg.norm(self.armbase_ee_goal, axis=1)
         engage_inner = getattr(self._cfg.control_config, "engage_inner", 0.40)
         engage_outer = getattr(self._cfg.control_config, "engage_outer", 0.70)
@@ -638,26 +664,30 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             0.0,
             1.0,
         )
-        home_delta = self._default_arm_angles - self._pending_arm_target
 
-        # Integrated arm target: add the weighted policy/IK delta to the
-        # persistent reference, with a home-return component when the goal
-        # is out of reach.  Clipped to soft joint limits (5 % margin inside
-        # the hard limits) so the arm can stay safely away from the stops.
-        arm_delta = (
-            arm_weight[:, None]
-            * (arm_action * self._cfg.control_config.arm_action_scale + self._cfg.ik.gain * dq_ik)
-            + (1.0 - arm_weight[:, None]) * 0.02 * home_delta
-        )
+        # Persistent IK target: integrate ONLY the weighted IK delta and a
+        # home-return term.  The RL residual is NOT integrated (see __init__).
+        home_return_gain = getattr(self._cfg.control_config, "home_return_gain", 0.02)
+        ik_delta = arm_weight[:, None] * self._cfg.ik.gain * dq_ik + (
+            1.0 - arm_weight[:, None]
+        ) * home_return_gain * (self._default_arm_angles - self._ik_target)
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
         if max_delta > 0:
-            arm_delta = np.clip(arm_delta, -max_delta, max_delta)
-        self._pending_arm_target = np.clip(
-            self._pending_arm_target + arm_delta,
+            ik_delta = np.clip(ik_delta, -max_delta, max_delta)
+        self._ik_target = np.clip(
+            self._ik_target + ik_delta,
             self._arm_soft_lower,
             self._arm_soft_upper,
         )
-        arm_ctrl = self._pending_arm_target
+
+        # Instantaneous RL residual — added to the persistent target but NOT
+        # integrated, so a constant policy bias cannot creep the arm.
+        arm_residual = arm_action * self._cfg.control_config.arm_action_scale
+        arm_ctrl = np.clip(
+            self._ik_target + arm_residual,
+            self._arm_soft_lower,
+            self._arm_soft_upper,
+        )
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 
@@ -784,6 +814,23 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ).any(axis=1)
             terminated = terminated | limit_violated
 
+        # Held-success: EE within 10 cm continuously for >= hold_time (0.5 s)
+        # → early termination + success flag, so easy episodes don't run the
+        # full 10 s harvesting distance/success reward.
+        ee_dist = np.linalg.norm(ee_pos_world - self.world_ee_goal, axis=1)
+        within_10cm = ee_dist < 0.10
+        hold_steps = max(1, int(0.5 / self._cfg.ctrl_dt))
+        self._success_hold_timer = np.where(within_10cm, self._success_hold_timer + 1, 0)
+        self._success_once |= within_10cm
+        newly_held = self._success_hold_timer >= hold_steps
+        self._success_hold |= newly_held
+        # Record steps-to-first-success for eval
+        first_success = self._success_once & (self._steps_to_success == 0)
+        self._steps_to_success = np.where(
+            first_success, state.info.get("steps", 0) + 1, self._steps_to_success
+        )
+        terminated = terminated | newly_held
+
         prev_arm_vel_saved = self._prev_arm_vel.copy()
         self._prev_arm_vel = arm_vel.copy()
 
@@ -831,6 +878,15 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         for k in obs:
             obs[k] = np.nan_to_num(obs[k], copy=False, nan=0.0, posinf=0.0, neginf=0.0)
         nan_terminated = np.any(np.isnan(arm_pos), axis=1)
+
+        # Publish success/debug metrics for eval + logging.
+        state.info["ee_dist"] = ee_dist
+        state.info["success_once"] = self._success_once.copy()
+        state.info["success_hold"] = self._success_hold.copy()
+        state.info["steps_to_success"] = self._steps_to_success.copy()
+        state.info["q_target"] = self._ik_target.copy()
+        state.info["q_actual"] = arm_pos.copy()
+
         return state.replace(
             obs=obs,
             reward=reward,
@@ -887,8 +943,11 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         # Arm-base clearance / collision reward using proper signed distance
         # to the base collision box (0.55×0.38×0.20 m in base-local).
-        # Checks EE + midpoint (armbase→EE) as a two-point proxy for the arm.
+        # Box centre is offset from the armbase point by the XML geometry:
+        #   base_collision pos=(0.12,0,0.18), armbasepoint pos=(0.2462,0,0.2765)
+        #   → offset = (0.12-0.2462, 0, 0.18-0.2765) = (-0.1262, 0, -0.0965)
         _BASE_BOX_HALF = np.array([0.55, 0.38, 0.20], dtype=np.float64)
+        _BOX_CENTRE_OFFSET = np.array([-0.1262, 0.0, -0.0965], dtype=np.float64)
 
         def _arm_point_signed_dist(p_w, box_centre_w, base_quat_w):
             """Signed distance from point(s) to axis-aligned base box in base frame."""
@@ -901,27 +960,30 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             inside = np.minimum(np.max(q, axis=1), 0.0)
             return outside + inside  # >0 outside, <0 inside
 
-        def _arm_base_clearance_fn(ctx):
-            base_pos_w = ctx.armbase_pos_world
+        def _min_arm_signed_dist(ctx):
+            """Min signed distance over arm links (Link2-6) + EE to base box."""
             base_quat_w = ctx.armbase_quat_world
-            box_centre_w = base_pos_w  # armbase is now on the base body, box centred near it
-            # Check EE point
-            sd_ee = _arm_point_signed_dist(ctx.ee_pos_world, box_centre_w, base_quat_w)
-            # Check midpoint (armbase→EE) as rough arm-body proxy
-            mid_w = 0.5 * (base_pos_w + ctx.ee_pos_world)
-            sd_mid = _arm_point_signed_dist(mid_w, box_centre_w, base_quat_w)
-            sd = np.minimum(sd_ee, sd_mid)
+            box_centre_w = ctx.armbase_pos_world + np_quat_apply_batched(
+                base_quat_w,
+                np.broadcast_to(_BOX_CENTRE_OFFSET, (ctx.num_envs, 3)),
+            )
+            # Collect world positions of arm links + EE
+            points = [ctx.ee_pos_world]
+            for name in self._cfg.sensor.link_pos:
+                points.append(self._backend.get_sensor_data(name))
+            sd = np.stack(
+                [_arm_point_signed_dist(p, box_centre_w, base_quat_w) for p in points],
+                axis=1,
+            )
+            return np.min(sd, axis=1)
+
+        def _arm_base_clearance_fn(ctx):
+            sd = _min_arm_signed_dist(ctx)
             margin = 0.05
             return np.square(np.maximum(margin - sd, 0.0))
 
         def _arm_base_collision_fn(ctx):
-            base_pos_w = ctx.armbase_pos_world
-            base_quat_w = ctx.armbase_quat_world
-            box_centre_w = base_pos_w
-            sd_ee = _arm_point_signed_dist(ctx.ee_pos_world, box_centre_w, base_quat_w)
-            mid_w = 0.5 * (base_pos_w + ctx.ee_pos_world)
-            sd_mid = _arm_point_signed_dist(mid_w, box_centre_w, base_quat_w)
-            sd = np.minimum(sd_ee, sd_mid)
+            sd = _min_arm_signed_dist(ctx)
             penetration = np.maximum(-sd, 0.0)
             return penetration * penetration
 

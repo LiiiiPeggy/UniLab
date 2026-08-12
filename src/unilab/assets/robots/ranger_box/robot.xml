@@ -196,6 +196,11 @@
     <framequat name="endpoint-framequat" objtype="site" objname="endpoint" reftype="site" refname="armbasepoint"/>
     <framepos name="armbasepoint-framepos" objtype="site" objname="armbasepoint" />
     <framequat name="armbasepoint-framequat" objtype="site" objname="armbasepoint" />
+    <framepos name="link2-framepos" objtype="body" objname="cr10_Link2" />
+    <framepos name="link3-framepos" objtype="body" objname="cr10_Link3" />
+    <framepos name="link4-framepos" objtype="body" objname="cr10_Link4" />
+    <framepos name="link5-framepos" objtype="body" objname="cr10_Link5" />
+    <framepos name="link6-framepos" objtype="body" objname="cr10_Link6" />
     <jointactuatorfrc name="cr10_j1_torque" joint="cr10_joint1"/>
     <jointactuatorfrc name="cr10_j2_torque" joint="cr10_joint2"/>
     <jointactuatorfrc name="cr10_j3_torque" joint="cr10_joint3"/>

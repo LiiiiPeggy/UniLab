@@ -13,6 +13,8 @@ def _compute_wheel_ik(
     v_real: np.ndarray,
     wheel_positions: tuple[tuple[float, float], ...],
     wheel_radius: float,
+    prev_steer: np.ndarray | None = None,
+    deadband: float = 0.03,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute steer angles and wheel angular velocities from base velocity.
 
@@ -20,19 +22,41 @@ def _compute_wheel_ik(
         v_real: ``(N, 3)`` — vx, vy, vyaw in base frame.
         wheel_positions: ``((x, y), ...)`` — 4 wheel positions in base frame.
         wheel_radius: wheel radius in meters.
+        prev_steer: ``(N, 4)`` — previous steer angles, held when speed is
+            below the deadband.  Pass ``None`` to disable hold behaviour.
+        deadband: linear speed threshold (m/s).  Below this, omega is zeroed
+            and steer holds its previous value.
 
     Returns:
-        ``(steer, omega)`` — both ``(N, 4)`` float64.
+        ``(steer, omega)`` — both ``(N, 4)`` float64, with ``steer`` in
+        ``[-pi/2, pi/2]``.
     """
     pos = np.asarray(wheel_positions, dtype=np.float64)  # (4, 2)
     x = pos[:, 0]  # (4,)
     y = pos[:, 1]  # (4,)
 
-    vx_i = v_real[:, 0:1] - v_real[:, 2:3] * y[None, :]   # (N, 4)
-    vy_i = v_real[:, 1:2] + v_real[:, 2:3] * x[None, :]   # (N, 4)
+    vx_i = v_real[:, 0:1] - v_real[:, 2:3] * y[None, :]  # (N, 4)
+    vy_i = v_real[:, 1:2] + v_real[:, 2:3] * x[None, :]  # (N, 4)
 
-    steer = np.arctan2(vy_i, vx_i)          # (N, 4)
-    omega = np.sqrt(vx_i**2 + vy_i**2) / wheel_radius  # (N, 4)
+    speed = np.sqrt(vx_i**2 + vy_i**2)  # (N, 4)
+    steer = np.arctan2(vy_i, vx_i)  # [-pi, pi]
+    omega = speed / wheel_radius
+
+    # Map steer into [-pi/2, pi/2]; when we subtract/add pi, flip omega sign
+    # so the wheel still rolls in the equivalent direction.
+    flip = steer > np.pi / 2
+    steer = np.where(flip, steer - np.pi, steer)
+    flip2 = steer < -np.pi / 2
+    steer = np.where(flip2, steer + np.pi, steer)
+    omega = np.where(flip | flip2, -omega, omega)
+
+    # Deadband: hold previous steer and zero omega when nearly stationary so
+    # atan2(noise, noise) doesn't jitter all four wheels every frame.
+    if prev_steer is not None:
+        moving = speed >= deadband
+        steer = np.where(moving, steer, prev_steer)
+        omega = np.where(moving, omega, 0.0)
+
     return steer, omega
 
 
@@ -45,10 +69,10 @@ class BaseVelocityController:
 
     def __init__(
         self,
-        cfg,                # BaseVelocityControllerConfig
+        cfg,  # BaseVelocityControllerConfig
         dt: float,
-        backend,            # SimBackend
-        asset_cfg,          # RangerBoxAsset
+        backend,  # SimBackend
+        asset_cfg,  # RangerBoxAsset
         num_envs: int,
     ):
         self._cfg = cfg
@@ -58,11 +82,10 @@ class BaseVelocityController:
         self._num_envs = num_envs
 
         self.v_real = np.zeros((num_envs, 3), dtype=np.float64)
-        self.latency_ring = np.zeros(
-            (cfg.max_latency_steps + 1, num_envs, 3), dtype=np.float64
-        )
+        self.latency_ring = np.zeros((cfg.max_latency_steps + 1, num_envs, 3), dtype=np.float64)
         self.latency_steps = np.zeros(num_envs, dtype=np.int32)
         self.latency_write_ptr = np.zeros(num_envs, dtype=np.int32)
+        self._prev_steer = np.zeros((num_envs, 4), dtype=np.float64)
 
         # Cache initial base z height for SE(2) planar lock
         init_qpos = backend.get_keyframe_qpos("home")
@@ -83,6 +106,7 @@ class BaseVelocityController:
         self.latency_write_ptr[env_ids] = 0
         self.latency_ring[:, env_ids, :] = 0.0
         self.v_real[env_ids] = 0.0
+        self._prev_steer[env_ids] = 0.0
 
     def step(self, action_base_vel: np.ndarray) -> None:
         """Compute v_real from policy action (steps 1-7).
@@ -148,22 +172,23 @@ class BaseVelocityController:
         # --- 8. Wheel visualization (before world-frame conversion) ---
         if cfg.enable_wheel_visualization:
             steer, omega = _compute_wheel_ik(
-                v_apply, self._asset.wheel_positions, self._asset.wheel_radius
+                v_apply,
+                self._asset.wheel_positions,
+                self._asset.wheel_radius,
+                prev_steer=self._prev_steer,
             )
+            self._prev_steer[:] = steer
             self._backend.set_joint_qpos(list(self._asset.steering_joint_names), steer)
             self._backend.set_joint_qvel(list(self._asset.wheel_joint_names), omega)
 
         # --- 9. World-frame conversion ---
         base_quat = self._backend.get_sensor_data("imu-framequat")
 
-        v_body = np.concatenate(
-            [v_apply[:, 0:2], np.zeros((N, 1))], axis=1, dtype=np.float64
-        )
-        w_body = np.concatenate(
-            [np.zeros((N, 2)), v_apply[:, 2:3]], axis=1, dtype=np.float64
-        )
+        v_body = np.concatenate([v_apply[:, 0:2], np.zeros((N, 1))], axis=1, dtype=np.float64)
+        w_body = np.concatenate([np.zeros((N, 2)), v_apply[:, 2:3]], axis=1, dtype=np.float64)
 
         from unilab.envs.common.rotation import np_quat_apply_batched
+
         v_world = np_quat_apply_batched(base_quat, v_body)
         w_world = np_quat_apply_batched(base_quat, w_body)
 
