@@ -381,4 +381,91 @@ class TestWheelIK:
         np.testing.assert_allclose(omega, 0.0)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# IK Jacobian + anti-windup
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestIKAntiWindup:
+    """Verify Jacobian frame is correct and _ik_target does not wind up."""
+
+    @pytest.fixture
+    def env1(self):
+        from unilab.base.registry import ensure_registries, make
+
+        ensure_registries()
+        env = make("RangerBoxReach", sim_backend="mujoco", num_envs=1)
+        yield env
+        env.close()
+
+    def test_ik_jacobian_matches_finite_difference(self, env1):
+        from unilab.envs.common.rotation import np_matrix_from_quat
+
+        env1.reset(np.array([0]))
+        env1.init_state()
+        q0 = env1.get_arm_dof_pos()[0].copy()
+        names = list(env1._cfg.asset.arm_joint_names)
+
+        # Analytic armbase-frame position Jacobian (same as compute_arm_ik_delta).
+        jacp_w, _ = env1._backend.get_site_jacobian_w(
+            env1._ee_site_id, env1._arm_jacobian_dof_indices
+        )
+        ref_rot_w = np_matrix_from_quat(
+            env1._backend.get_sensor_data(env1._cfg.sensor.arm_ref_world_quat)
+        )
+        rot_w_to_b = np.swapaxes(ref_rot_w, 1, 2)
+        jacp_b = np.matmul(rot_w_to_b, jacp_w)[0]  # (3, 6) for env 0
+
+        # Numerical finite-difference Jacobian in armbase frame (endpoint-framepos
+        # is already expressed relative to armbasepoint).
+        eps = 1e-5
+        jac_num = np.zeros((3, 6))
+        for j in range(6):
+            q_plus = q0.copy()
+            q_minus = q0.copy()
+            q_plus[j] += eps
+            q_minus[j] -= eps
+            env1._backend.set_joint_qpos(names, q_plus[None])
+            env1._backend.forward_sensors()
+            p_plus = env1.get_ee_local_pose()[0][0].copy()
+            env1._backend.set_joint_qpos(names, q_minus[None])
+            env1._backend.forward_sensors()
+            p_minus = env1.get_ee_local_pose()[0][0].copy()
+            jac_num[:, j] = (p_plus - p_minus) / (2 * eps)
+
+        err = np.max(np.abs(jac_num - jacp_b))
+        assert err < 1e-2, f"Jacobian frame mismatch: max_abs_error={err}"
+
+    def test_ik_target_does_not_windup_on_unreachable_goal(self, env1):
+        # Place a clearly unreachable goal (2 m away in armbase frame) and run
+        # many IK-only steps: _ik_target must stay near q_actual, NOT pin at
+        # the soft joint limits.
+        env1.reset(np.array([0]))
+        env1.init_state()
+        far_world = env1.armbase_pos_world[0] + np.array([2.0, 0.0, 0.0])
+        env1.world_ee_goal[:] = far_world
+        for _ in range(500):
+            env1.step(np.zeros((1, 9)))
+        q_actual = env1.get_arm_dof_pos()[0]
+        err = np.abs(env1._ik_target[0] - q_actual)
+        assert err.max() < env1._cfg.control_config.max_target_error + 1e-6
+
+    def test_ik_target_never_saturates_soft_limits(self, env1):
+        # The target must never pin at the soft joint limits (the windup
+        # symptom).  With a random goal (some reachable, some not), the
+        # anti-windup should keep _ik_target inside the soft limits and near
+        # the actual pose, never railing to ±2.8 rad.
+        env1.reset(np.array([0]))
+        env1.init_state()
+        for _ in range(500):
+            env1.step(np.zeros((1, 9)))
+            t = env1._ik_target[0]
+            assert np.all(t >= env1._arm_soft_lower - 1e-6)
+            assert np.all(t <= env1._arm_soft_upper + 1e-6)
+            # The target must stay reasonably close to actual (anti-windup),
+            # not drift several rad away.
+            q_actual = env1.get_arm_dof_pos()[0]
+            assert np.abs(t - q_actual).max() < 0.5
+
+
 from unilab.envs.common.rotation import np_quat_apply_batched  # noqa: E402

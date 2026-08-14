@@ -150,6 +150,11 @@ class RangerBoxControlConfig(ControlConfig):
     engage_outer: float = 0.70
     # Home-return gain (per step) when the goal is outside the engagement gate.
     home_return_gain: float = 0.02
+    # Max |q_target - q_actual| (rad).  The persistent IK target is anchored to
+    # the actual joint positions and clamped to this bound, so a persistently
+    # unreachable goal cannot drive the target to the soft joint limits (anti-
+    # windup).  Default 0.08 rad ≈ 4.6°.
+    max_target_error: float = 0.08
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -665,17 +670,43 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             1.0,
         )
 
-        # Persistent IK target: integrate ONLY the weighted IK delta and a
-        # home-return term.  The RL residual is NOT integrated (see __init__).
+        # Anti-windup on dq: once the target has reached the soft limit, stop
+        # integrating further in the direction that would push it out — don't
+        # let the controller saturate by computing +clip at every frame.
+        _limit_eps = 0.02
+        _at_upper = self._ik_target >= self._arm_soft_upper - _limit_eps
+        _at_lower = self._ik_target <= self._arm_soft_lower + _limit_eps
+        dq_ik = np.where(_at_upper & (dq_ik > 0), 0.0, dq_ik)
+        dq_ik = np.where(_at_lower & (dq_ik < 0), 0.0, dq_ik)
+
+        # Persistent IK target ANCHORED to actual joint positions (not a pure
+        # integrator).  The candidate target is the actual pose plus this step's
+        # weighted IK delta plus a home-return term when the goal is out of the
+        # engagement gate.  This prevents the desired target from drifting far
+        # away from the true arm state (structural anti-windup).
+        q_actual = self.get_arm_dof_pos()
         home_return_gain = getattr(self._cfg.control_config, "home_return_gain", 0.02)
-        ik_delta = arm_weight[:, None] * self._cfg.ik.gain * dq_ik + (
-            1.0 - arm_weight[:, None]
-        ) * home_return_gain * (self._default_arm_angles - self._ik_target)
+        q_candidate = (
+            q_actual
+            + arm_weight[:, None] * self._cfg.ik.gain * dq_ik
+            + (1.0 - arm_weight[:, None]) * home_return_gain * (self._default_arm_angles - q_actual)
+        )
+        # Smooth toward the candidate at a bounded per-step rate.
+        delta_target = q_candidate - self._ik_target
         max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
         if max_delta > 0:
-            ik_delta = np.clip(ik_delta, -max_delta, max_delta)
+            delta_target = np.clip(delta_target, -max_delta, max_delta)
+        self._ik_target = self._ik_target + delta_target
+        # Tracking-error bound: target stays within max_target_error of actual.
+        max_target_error = getattr(self._cfg.control_config, "max_target_error", 0.08)
         self._ik_target = np.clip(
-            self._ik_target + ik_delta,
+            self._ik_target,
+            q_actual - max_target_error,
+            q_actual + max_target_error,
+        )
+        # Soft joint limits last.
+        self._ik_target = np.clip(
+            self._ik_target,
             self._arm_soft_lower,
             self._arm_soft_upper,
         )
