@@ -44,16 +44,26 @@ def run_mujoco_playback(
     obs = initialize()
     state_list = []
     marker_list: list[np.ndarray | None] = []
+    text_list: list[list[str] | None] = []
     for _ in range(num_steps):
         obs = step(obs)
         state_list.append(np.asarray(frame_state_getter(), dtype=np.float32).copy())
         if extra_data_getter is not None:
-            marker = extra_data_getter()
-            marker_list.append(
-                np.asarray(marker, dtype=np.float32).copy() if marker is not None else None
-            )
+            extra = extra_data_getter()
+            if isinstance(extra, tuple):
+                marker, text = extra
+                marker_list.append(
+                    np.asarray(marker, dtype=np.float32).copy() if marker is not None else None
+                )
+                text_list.append(list(text) if text is not None else None)
+            else:
+                marker_list.append(
+                    np.asarray(extra, dtype=np.float32).copy() if extra is not None else None
+                )
+                text_list.append(None)
         else:
             marker_list.append(None)
+            text_list.append(None)
 
     marker_positions_list = (
         marker_list if any(marker is not None for marker in marker_list) else None
@@ -90,6 +100,7 @@ def run_mujoco_playback(
                 cam_azimuth=cam_kw.get("cam_azimuth", 90),
                 render_spacing=effective_spacing,
                 marker_positions_list=marker_positions_list,
+                text_overlays_list=text_list,
             )
         else:
             frames = render_many.render_states_get_frames(
@@ -100,6 +111,7 @@ def run_mujoco_playback(
                 camera_id=-1,
                 render_spacing=effective_spacing,
                 marker_positions_list=marker_positions_list,
+                text_overlays_list=text_list,
                 **cam_kw,
             )
 

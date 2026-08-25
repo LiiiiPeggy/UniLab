@@ -21,10 +21,15 @@
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" contype="4" conaffinity="4"/>
   </worldbody>
 
+  <!-- home arm pose = gravity-settle equilibrium of the current physics
+       (gravcomp=1, joint damping=1, current actuator kp/force limits), measured
+       by scripts/manip_loco/calibrate_ranger_box_settle.py:
+       j2 settles -0.3 -> ~0.00, j3 0.75 -> ~0.10 under residual gravity.
+       Resetting AT the settled pose eliminates the initial sag transient. -->
   <keyframe>
     <key name="home"
-      qpos="0 0 0.415 1 0 0 0 0 0 0 0 0 0 0 0 0 -0.3 0.75 0 0.45 0 0 0 0 0 0 0 0 0"
-      ctrl="0 -0.3 0.75 0 0.45 0 0"
+      qpos="0 0 0.415 1 0 0 0 0 0 0 0 0 0 0 0 0.0463 -0.0022 0.1019 -0.0014 0.4644 -0.0122 0 0 0 0 0 0 0 0"
+      ctrl="0.0463 -0.0022 0.1019 -0.0014 0.4644 -0.0122 0"
     />
   </keyframe>
 </mujoco>

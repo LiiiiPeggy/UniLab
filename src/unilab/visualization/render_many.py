@@ -200,7 +200,10 @@ def render_frame_job(args):
         cam_azimuth,
         cam_lookat,
         marker_positions,
+        text_overlays,
+        viewport,
     ) = args
+    width, height = viewport
 
     models = _worker_ctx["models"]
     data_list = _worker_ctx["data_list"]
@@ -345,8 +348,7 @@ def render_frame_job(args):
             mujoco.mjv_addGeoms(model, data, vopt, pert, catmask_static, renderer.scene)
             vopt.geomgroup[0] = geomgroup0
 
-    # 3. Overlay marker spheres.  marker_positions is (num_envs, 3) for a
-    #    single red goal sphere, or (num_envs, 6) for goal(red) + EE(green).
+    # 3. Overlay marker spheres / trajectory trails.
     if marker_positions is not None:
         _add_marker_spheres(
             renderer.scene,
@@ -355,29 +357,66 @@ def render_frame_job(args):
             np.arange(num_envs),
         )
 
-    return renderer.render()
+    frame = renderer.render()
+
+    # 4. Debug-text overlay: project each env's base to screen, draw text.
+    if text_overlays is not None and any(t for t in text_overlays):
+        base_pts = []
+        for i in range(num_envs):
+            base = np.asarray(state_batch[i][1:4], dtype=np.float64).copy()
+            if offsets is not None:
+                base[0] += float(offsets[i, 0])
+                base[1] += float(offsets[i, 1])
+            base[2] += 0.45  # raise label above the robot
+            base_pts.append(base)
+        screen = _project_points(cam, base_pts, width, height)
+        frame = _draw_text_overlay(frame, screen, text_overlays)
+
+    return frame
 
 
 def _add_marker_spheres(scene, marker_positions, offsets, env_indices):
-    """Draw goal (red) + optionally EE (green) overlay spheres.
+    """Draw goal (red) + EE (green) spheres and trajectory trails.
 
-    ``marker_positions`` is (num_envs, 3) for a single red goal marker, or
-    (num_envs, 6) where cols [0:3] = goal, [3:6] = current EE position.
+    ``marker_positions`` layouts:
+      (num_envs, 3)                      single red goal marker
+      (num_envs, 6)                      goal [0:3] + current EE [3:6]
+      (num_envs, 6 + 6*K)                goal + EE + base trail (3K) + EE trail (3K);
+      NaN marks unfilled trail slots (skipped).
     """
     goal_rgba = np.array([1.0, 0.2, 0.2, 0.9], dtype=np.float32)  # red
     ee_rgba = np.array([0.2, 1.0, 0.2, 0.9], dtype=np.float32)  # green
+    base_rgba = np.array([0.2, 0.4, 1.0, 0.9], dtype=np.float32)  # blue
     goal_size = np.array([0.03, 0.0, 0.0], dtype=np.float32)
     ee_size = np.array([0.02, 0.0, 0.0], dtype=np.float32)
+    trail_size = np.array([0.014, 0.0, 0.0], dtype=np.float32)
     eye3 = np.eye(3, dtype=np.float32).flatten()
     mp = np.asarray(marker_positions)
-    has_ee = mp.ndim == 2 and mp.shape[1] >= 6
+    ncols = mp.shape[1] if mp.ndim == 2 else 0
+    has_ee = ncols >= 6
+    n_traj = (ncols - 6) // 6 if ncols > 6 else 0
 
     for global_i in env_indices:
-        if scene.ngeom + (2 if has_ee else 1) >= scene.maxgeom:
+        if scene.ngeom + 2 + 2 * n_traj >= scene.maxgeom:
             break
         _add_one_sphere(scene, mp[global_i, 0:3], goal_size, goal_rgba, eye3, offsets, global_i)
         if has_ee:
             _add_one_sphere(scene, mp[global_i, 3:6], ee_size, ee_rgba, eye3, offsets, global_i)
+        if n_traj > 0:
+            base_traj = mp[global_i, 6 : 6 + 3 * n_traj].reshape(n_traj, 3)
+            ee_traj = mp[global_i, 6 + 3 * n_traj :].reshape(n_traj, 3)
+            _add_trajectory(scene, base_traj, base_rgba, trail_size, eye3, offsets, global_i)
+            _add_trajectory(scene, ee_traj, ee_rgba, trail_size, eye3, offsets, global_i)
+
+
+def _add_trajectory(scene, pts, rgba, size, eye3, offsets, global_i):
+    """Draw a polyline as small spheres, skipping NaN (unfilled) slots."""
+    for p in pts:
+        if np.isnan(p).any():
+            continue
+        if scene.ngeom + 1 >= scene.maxgeom:
+            break
+        _add_one_sphere(scene, p, size, rgba, eye3, offsets, global_i)
 
 
 def _add_one_sphere(scene, pos, size, rgba, eye3, offsets, global_i):
@@ -396,6 +435,70 @@ def _add_one_sphere(scene, pos, size, rgba, eye3, offsets, global_i):
     scene.ngeom += 1
 
 
+# ── Debug-text overlay (PIL) ────────────────────────────────────────────────
+#
+# MjvCamera does not expose pos/forward/right/up in the Python binding, so the
+# FREE-camera basis is rebuilt analytically from lookat/distance/elevation/
+# azimuth (validated against rendered sphere centroids; fovy is the MuJoCo
+# default 45°).  Projection is the standard pinhole with that basis.
+
+_FOVY_DEG = 45.0
+
+
+def _camera_basis_free(cam):
+    """Return (pos, forward, right, up) for an mjCAMERA_FREE camera."""
+    a0 = np.deg2rad(cam.azimuth)
+    a1 = np.deg2rad(cam.elevation)
+    lookat = np.asarray(cam.lookat, dtype=np.float64)
+    pos = lookat + cam.distance * np.array(
+        [np.cos(a1) * np.sin(a0), -np.cos(a1) * np.cos(a0), np.sin(a1)]
+    )
+    fwd = -(pos - lookat) / cam.distance
+    right = np.array([np.cos(a0), np.sin(a0), 0.0])
+    up = np.array([-np.sin(a1) * np.sin(a0), np.sin(a1) * np.cos(a0), np.cos(a1)])
+    return pos, fwd, right, up
+
+
+def _project_points(cam, points, width, height):
+    """Project world points to screen (top-left origin). None if behind camera."""
+    pos, fwd, right, up = _camera_basis_free(cam)
+    pts = np.asarray(points, dtype=np.float64) - pos
+    cam_x = pts @ right
+    cam_y = pts @ up
+    cam_z = pts @ fwd
+    f = (height / 2.0) / np.tan(np.deg2rad(_FOVY_DEG) / 2.0)
+    out = []
+    for x, y, z in zip(cam_x, cam_y, cam_z):
+        if z <= 0.05:
+            out.append(None)
+        else:
+            sx = f * x / z + width / 2.0
+            sy = f * y / z + height / 2.0
+            out.append((sx, height - sy))  # flip to top-left origin
+    return out
+
+
+def _draw_text_overlay(frame, screen_positions, texts):
+    """Draw per-env debug strings on an RGB frame with a black outline."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return frame
+    img = Image.fromarray(frame)
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 18)
+    except Exception:
+        font = ImageFont.load_default()
+    for (sxy, txt) in zip(screen_positions, texts):
+        if sxy is None or not txt:
+            continue
+        sx, sy = sxy
+        draw.text((sx + 4, sy - 24), txt, font=font, fill=(255, 255, 60),
+                  stroke_width=2, stroke_fill=(0, 0, 0))
+    return np.asarray(img)
+
+
 def render_states_get_frames(
     state_list,
     model_path,
@@ -409,6 +512,7 @@ def render_states_get_frames(
     cam_lookat=None,
     render_spacing=1.0,
     marker_positions_list=None,
+    text_overlays_list=None,
 ):
     """
     Render a list of physics states and return the list of frames.
@@ -425,7 +529,8 @@ def render_states_get_frames(
         cam_azimuth: Camera azimuth angle in degrees.
         cam_lookat: Optional [x, y, z] lookat override for the free camera.
         render_spacing: Grid spacing used to offset each env in composed video frames.
-        marker_positions_list: Optional list of (num_envs, 3) arrays for overlay spheres.
+        marker_positions_list: Optional list of (num_envs, 3+) arrays for overlay spheres.
+        text_overlays_list: Optional list of per-env debug strings (one list per frame).
     Returns:
         List of numpy arrays (H, W, 3) (RGB)
     """
@@ -436,6 +541,8 @@ def render_states_get_frames(
     num_envs = state_list[0].shape[0]
     offsets = get_grid_offsets(num_envs, spacing=render_spacing)
     shape = (width, height)
+    viewport = (width, height)
+    n_frames = len(state_list)
 
     print(
         f"Rendering {len(state_list)} frames for {num_envs} envs with {num_processes} processes..."
@@ -443,12 +550,26 @@ def render_states_get_frames(
 
     # Prepare arguments for each frame
     tasks = [
-        (s, offsets, False, cam_distance, cam_elevation, cam_azimuth, cam_lookat, m)
-        for s, m in zip(
+        (
+            s,
+            offsets,
+            False,
+            cam_distance,
+            cam_elevation,
+            cam_azimuth,
+            cam_lookat,
+            m,
+            t,
+            viewport,
+        )
+        for s, m, t in zip(
             state_list,
             marker_positions_list
             if marker_positions_list is not None
-            else [None] * len(state_list),
+            else [None] * n_frames,
+            text_overlays_list
+            if text_overlays_list is not None
+            else [None] * n_frames,
         )
     ]
 
@@ -504,6 +625,8 @@ def render_frame_tracking_job(args):
         cam_elevation,
         cam_azimuth,
         marker_positions,
+        _text_overlays,
+        _viewport,
     ) = args
 
     models = _worker_ctx["models"]
@@ -641,11 +764,14 @@ def render_states_get_frames_tracking(
     cam_azimuth=90,
     render_spacing=1.0,
     marker_positions_list=None,
+    text_overlays_list=None,
 ):
     """Render with camera tracking on a single primary environment.
 
     Only the primary env and its nearest neighbours are shown. The camera
     follows the root body of the primary env each frame (``mjCAMERA_TRACKING``).
+    (Debug-text overlay is only drawn by the non-tracking free-camera path —
+    the tracking camera basis is not exposed by the Python binding.)
 
     Args:
         state_list: List of numpy arrays, each shape (num_envs, state_dim).
@@ -664,6 +790,8 @@ def render_states_get_frames_tracking(
     num_envs = state_list[0].shape[0]
     offsets = get_grid_offsets(num_envs, spacing=render_spacing)
     shape = (width, height)
+    viewport = (width, height)
+    n_frames = len(state_list)
 
     tracking_env_idx = min(tracking_env_idx, num_envs - 1)
     neighbour_indices = _get_nearest_env_indices(offsets, tracking_env_idx, max_extra_envs)
@@ -677,12 +805,26 @@ def render_states_get_frames_tracking(
     )
 
     tasks = [
-        (s, offsets, env_indices, primary_local_idx, cam_distance, cam_elevation, cam_azimuth, m)
-        for s, m in zip(
+        (
+            s,
+            offsets,
+            env_indices,
+            primary_local_idx,
+            cam_distance,
+            cam_elevation,
+            cam_azimuth,
+            m,
+            t,
+            viewport,
+        )
+        for s, m, t in zip(
             state_list,
             marker_positions_list
             if marker_positions_list is not None
-            else [None] * len(state_list),
+            else [None] * n_frames,
+            text_overlays_list
+            if text_overlays_list is not None
+            else [None] * n_frames,
         )
     ]
 

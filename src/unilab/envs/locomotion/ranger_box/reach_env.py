@@ -624,9 +624,14 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         dtype = get_global_dtype()
         raw_qpos = self._backend.get_keyframe_qpos("home")
         self._init_qpos = np.asarray(raw_qpos, dtype=dtype)
-        # default_angles = arm control defaults from keyframe ctrl
-        # (6 arm joints + 1 gripper), NOT from qpos tail.
-        self.default_angles = np.array([0.0, -0.3, 0.75, 0.0, 0.45, 0.0, 0.0], dtype=dtype)
+        # default_angles = gravity-settle equilibrium of the current physics
+        # (gravcomp=1, joint damping=1, actuator kp/force limits), measured by
+        # scripts/manip_loco/calibrate_ranger_box_settle.py.  Resetting at the
+        # settled pose (instead of the old 0,-0.3,0.75,0,0.45,0 nominal) removes
+        # the initial sag transient and keeps obs arm_diff ≈ 0 at reset.
+        self.default_angles = np.array(
+            [0.0463, -0.0022, 0.1019, -0.0014, 0.4644, -0.0122, 0.0], dtype=dtype
+        )
         raw_qvel = self._backend.get_init_qvel()
         self._init_qvel = np.asarray(raw_qvel, dtype=dtype)
 
@@ -836,6 +841,14 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         ee_pos_world = self.armbase_pos_world + np_quat_apply_batched(
             self.armbase_quat_world, ee_local_pos
         )
+
+        # Eval trajectory history (play-only; no-op during training).
+        if self._record_traj:
+            base_pos = self._backend.get_base_pos()
+            self._traj_base = np.roll(self._traj_base, -1, axis=1)
+            self._traj_base[:, -1] = base_pos
+            self._traj_ee = np.roll(self._traj_ee, -1, axis=1)
+            self._traj_ee[:, -1] = ee_pos_world
 
         tilt_sq = gravity[:, 0] ** 2 + gravity[:, 1] ** 2
         terminated = tilt_sq > np.sin(1.0) ** 2
@@ -1082,6 +1095,17 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64), (self._num_envs, 1)
         )
         self._arm_goal_timer = np.zeros((self._num_envs,), dtype=np.int32)
+        # Eval trajectory recording (play/video only).  Recording is disabled
+        # during training; the first eval_visualization_markers() call enables
+        # it.  NaN marks slots not yet filled so the renderer skips them.
+        self._record_traj = False
+        self._traj_len = 60
+        self._traj_base = np.full(
+            (self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64
+        )
+        self._traj_ee = np.full(
+            (self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64
+        )
 
     @property
     def curr_ee_goal_world(self) -> np.ndarray:
@@ -1089,13 +1113,34 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         return self.world_ee_goal
 
     def eval_visualization_markers(self) -> np.ndarray | None:
-        """Return (num_envs, 6) = [goal_world, ee_world] for playback markers.
+        """Return playback marker data for goal/EE spheres + trajectory trails.
 
-        goal drawn red, current EE drawn green.  ``None`` disables markers.
+        Shape (num_envs, 6 + 6*K) where K = self._traj_len:
+          [0:3]        goal world (red sphere)
+          [3:6]        current EE world (green sphere)
+          [6:6+3K]     base trajectory (blue trail, NaN = unfilled slot)
+          [6+3K:6+6K]  EE trajectory (green trail, NaN = unfilled slot)
+
+        The first call enables trajectory recording (play-only, no training
+        overhead).  ``None`` disables markers.
         """
+        self._record_traj = True
         ee_local, _ = self.get_ee_local_pose()
         ee_world = self.armbase_pos_world + np_quat_apply_batched(self.armbase_quat_world, ee_local)
-        return np.concatenate([self.world_ee_goal, ee_world], axis=1)
+        base_flat = self._traj_base.reshape(self._num_envs, -1)
+        ee_flat = self._traj_ee.reshape(self._num_envs, -1)
+        return np.concatenate([self.world_ee_goal, ee_world, base_flat, ee_flat], axis=1)
+
+    def eval_visualization_text(self) -> list[str]:
+        """Per-env debug strings for the video overlay: id, EE distance, flag."""
+        ee_local, _ = self.get_ee_local_pose()
+        ee_world = self.armbase_pos_world + np_quat_apply_batched(self.armbase_quat_world, ee_local)
+        d = np.linalg.norm(ee_world - self.world_ee_goal, axis=1)
+        out = []
+        for i in range(self._num_envs):
+            flag = "SUCCESS" if self._success_once[i] else "run"
+            out.append(f"env{i} d={d[i]:.2f}m {flag}")
+        return out
 
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
         n = len(env_ids)

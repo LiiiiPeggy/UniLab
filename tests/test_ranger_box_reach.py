@@ -212,6 +212,47 @@ class TestRangerBoxReachEnv:
         env4.reset(np.arange(4))
         assert not np.allclose(env4.world_ee_goal, 0.0)
 
+    def test_traj_recording_is_lazy(self, env4):
+        env4.reset(np.arange(4))
+        # Recording must be OFF during training; only the eval marker getter
+        # (play-only) enables it.
+        assert env4._record_traj is False
+        env4.eval_visualization_markers()
+        assert env4._record_traj is True
+
+    def test_eval_visualization_markers_shape(self, env4):
+        env4.reset(np.arange(4))
+        for _ in range(3):
+            env4.step(np.zeros((4, 9)))
+        m = env4.eval_visualization_markers()
+        assert m.shape == (4, 6 + 6 * env4._traj_len)
+        # Goal + EE columns are finite; unfilled trail slots are NaN.
+        assert np.isfinite(m[:, :6]).all()
+        assert np.isnan(m[:, 6:]).any()
+
+    def test_eval_visualization_text(self, env4):
+        env4.reset(np.arange(4))
+        for _ in range(3):
+            env4.step(np.zeros((4, 9)))
+        t = env4.eval_visualization_text()
+        assert isinstance(t, list) and len(t) == 4
+        assert all(isinstance(s, str) and "env" in s and "d=" in s for s in t)
+
+    def test_traj_last_slot_tracks_ee(self, env4):
+        from unilab.envs.common.rotation import np_quat_apply_batched
+
+        env4.reset(np.arange(4))
+        env4.eval_visualization_markers()  # enable recording
+        for _ in range(5):
+            env4.step(np.zeros((4, 9)))
+        ee_local, _ = env4.get_ee_local_pose()
+        ee_world = env4.armbase_pos_world + np_quat_apply_batched(
+            env4.armbase_quat_world, ee_local
+        )
+        assert np.allclose(env4._traj_ee[:, -1], ee_world, atol=1e-6)
+        base_world = env4._backend.get_base_pos()
+        assert np.allclose(env4._traj_base[:, -1], base_world, atol=1e-6)
+
     def test_armbase_ee_goal_nonzero_after_reset(self, env4):
         env4.reset(np.arange(4))
         assert not np.allclose(env4.armbase_ee_goal, 0.0)
@@ -224,7 +265,12 @@ class TestRangerBoxReachEnv:
 
     def test_default_angles_7_dims(self, env4):
         assert env4.default_angles.shape == (7,)
-        assert env4.default_angles[1] == pytest.approx(-0.3)
+        # default_angles = gravity-settle equilibrium (calibrate_ranger_box_settle),
+        # NOT the old nominal 0,-0.3,0.75,...  The reset keyframe arm qpos must
+        # match it so reset starts at the physics resting pose (no sag transient).
+        assert env4.default_angles[1] == pytest.approx(-0.0022, abs=1e-3)
+        assert np.allclose(env4._init_qpos[15:21], env4.default_angles[:6], atol=1e-4)
+        assert np.allclose(env4._init_qpos[15:21], env4._default_arm_angles, atol=1e-4)
 
     def test_partial_reset_clears_history(self, env4):
         env4.reset(np.arange(4))
