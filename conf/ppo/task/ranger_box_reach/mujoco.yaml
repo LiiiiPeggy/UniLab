@@ -53,6 +53,11 @@ env:
   max_episode_seconds: 10.0
   init_state:
     pos: [0.0, 0.0, 0.415]
+  # Manipulation-ready arm pose: folded (EE 0.45 m from armbase), Jacobian
+  # condition 1.6, no collision, gravity-settle drift ~0.02 rad (gravcomp=0).
+  # Found by scripts/manip_loco/find_ranger_box_ready_pose.py.  Reset loads this
+  # instead of the (extended, singular) gravity-hanging equilibrium.
+  init_arm_pose: [-0.0793, 0.0031, -2.1214, -1.6912, 2.118, 1.1986]
   control_config:
     arm_action_scale: 0.01
     arm_max_delta_per_step: 0.01

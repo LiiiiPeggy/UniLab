@@ -98,37 +98,44 @@
         </body>
       </body>
 
-      <body gravcomp="1" name="cr10_Link1" pos="0.2462 0 0.2765">
+      <!-- gravcomp is DISABLED (was 1) on every arm + gripper body.  Measured
+           by scripts/manip_loco/calibrate_ranger_box_settle.py and the ready-pose
+           search: with gravcomp=1 the compensation (computed at the model's
+           reference pose) actively pushes the arm toward the extended
+           equilibrium — a folded manipulation pose sags 0.4-0.7 rad on j3,
+           while j3's torque cannot counter it.  With gravcomp=0 the position
+           actuators hold folded poses to <0.02 rad drift. -->
+      <body gravcomp="0" name="cr10_Link1" pos="0.2462 0 0.2765">
         <inertial pos="-1.6635e-06 -0.010819 0.0028389" quat="0.999935 -0.0113747 -1.32872e-05 -5.20368e-05" mass="4.1649" diaginertia="0.020714 0.0188262 0.0145728" />
         <joint name="cr10_joint1" damping="1" pos="0 0 0" axis="0 0 1" range="-3.92 0.94" />
         <geom type="mesh" rgba="1 1 1 1" mesh="Link1" class="visual" />
         <geom name="link1_collision" class="arm_collision" type="box"
               pos="0 0 0" size="0.08 0.10 0.10"/>
-        <body gravcomp="1" name="cr10_Link2" quat="0.499998 0.5 0.5 -0.500002">
+        <body gravcomp="0" name="cr10_Link2" quat="0.499998 0.5 0.5 -0.500002">
           <inertial pos="-0.24631 3.5816e-07 0.19515" quat="0.503124 0.496855 0.49686 0.503122" mass="11.314" diaginertia="0.30683 0.299762 0.0335742" />
           <joint name="cr10_joint2" damping="1" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" />
           <geom type="mesh" rgba="1 1 1 1" mesh="Link2" class="visual" />
           <geom name="link2_collision" class="arm_collision" type="box"
                 pos="-0.30 0 0.10" size="0.33 0.08 0.08"/>
-          <body gravcomp="1" name="cr10_Link3" pos="-0.607 0 0">
+          <body gravcomp="0" name="cr10_Link3" pos="-0.607 0 0">
             <inertial pos="-0.270856 2.51447e-07 0.062296" quat="0.502759 0.497224 0.497187 0.502799" mass="4.89191" diaginertia="0.239673 0.238398 0.00712848" />
             <joint name="cr10_joint3" damping="1" pos="0 0 0" axis="0 0 1" range="-2.86 2.86" />
             <geom type="mesh" rgba="1 1 1 1" mesh="Link3" class="visual" />
             <geom name="link3_collision" class="arm_collision" type="box"
                   pos="-0.28 0 0.10" size="0.30 0.06 0.06"/>
-            <body gravcomp="1" name="cr10_Link4" pos="-0.568 0 0.191" quat="0.707105 0 0 -0.707108">
+            <body gravcomp="0" name="cr10_Link4" pos="-0.568 0 0.191" quat="0.707105 0 0 -0.707108">
               <inertial pos="-2.53137e-07 0.00798724 -0.00589074" quat="0.691341 0.722528 1.80757e-05 -1.34988e-05" mass="1.16884" diaginertia="0.00292615 0.00273515 0.00149812" />
               <joint name="cr10_joint4" damping="1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" />
               <geom type="mesh" rgba="1 1 1 1" mesh="Link4" class="visual" />
               <geom name="link4_collision" class="arm_collision" type="box"
                     pos="0 -0.06 0" size="0.08 0.06 0.08"/>
-              <body gravcomp="1" name="cr10_Link5" pos="0 -0.125 0" quat="0.707105 0.707108 0 0">
+              <body gravcomp="0" name="cr10_Link5" pos="0 -0.125 0" quat="0.707105 0.707108 0 0">
                 <inertial pos="5.50699e-07 -0.0145468 -0.00454887" quat="0.723949 0.689853 2.09649e-05 -8.16019e-06" mass="1.22303" diaginertia="0.00337905 0.00323707 0.00148849" />
                 <joint name="cr10_joint5" damping="1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" />
                 <geom type="mesh" rgba="1 1 1 1" mesh="Link5" class="visual" />
                 <geom name="link5_collision" class="arm_collision" type="box"
                       pos="0 0.05 0" size="0.08 0.06 0.08"/>
-                <body gravcomp="1" name="cr10_Link6" pos="0 0.1084 0" quat="0.707105 -0.707108 0 0">
+                <body gravcomp="0" name="cr10_Link6" pos="0 0.1084 0" quat="0.707105 -0.707108 0 0">
                   <inertial pos="-0.00372511 -0.00481821 -0.0011281" quat="0.0135251 0.718835 0.10122 0.687639" mass="1.1116" diaginertia="0.00622428 0.00491985 0.00244698" />
                   <joint name="cr10_joint6" damping="1" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" />
                   <geom type="mesh" rgba="1 1 1 1" mesh="Link6" class="visual" />
@@ -138,41 +145,41 @@
                   <site name="endpoint" pos="0 0 0" size="0.01" rgba="1 0.3 0.3 1" group="2" />
                   <geom type="mesh" mesh="ag95_base_link" class="visual" />
                   <geom size="0.013 0.062 0.0145" pos="-0.0100115 -0.0744978 0.0327115" quat="0.500398 0.499602 -0.5 0.5" type="box" class="visual" />
-                  <body gravcomp="1" name="gripper_finger1_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796327 0 0 1">
+                  <body gravcomp="0" name="gripper_finger1_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796327 0 0 1">
                     <inertial pos="0 0 0" quat="0.634377 0.634377 -0.312356 0.312356" mass="0.011111" diaginertia="4.96455e-06 3.24091e-06 1.92174e-06" />
                     <joint name="gripper_finger1_joint" pos="0 0 0" axis="0 -1 0" range="0 0.65" />
                     <geom type="mesh" mesh="crank_Link" class="visual" />
-                    <body gravcomp="1" name="gripper_finger1_finger_link" pos="0.029208 0 -0.0227133">
+                    <body gravcomp="0" name="gripper_finger1_finger_link" pos="0.029208 0 -0.0227133">
                       <inertial pos="0 0 0" quat="0.985484 0 0.169771 0" mass="0.0222871" diaginertia="9.5054e-06 7.26157e-06 2.56546e-06" />
                       <joint name="gripper_finger1_finger_joint" pos="0 0 0" axis="0 -1 0" range="-3.14 3.14" />
                       <geom type="mesh" mesh="rod_Link" class="visual" />
                     </body>
                   </body>
-                  <body gravcomp="1" name="gripper_finger2_knuckle_link" pos="0.016 0 0.10586">
+                  <body gravcomp="0" name="gripper_finger2_knuckle_link" pos="0.016 0 0.10586">
                     <inertial pos="0 0 0" quat="0.634377 0.634377 -0.312356 0.312356" mass="0.011111" diaginertia="4.96455e-06 3.24091e-06 1.92174e-06" />
                     <joint name="gripper_finger2_joint" pos="0 0 0" axis="0 -1 0" range="0 0.65" />
                     <geom type="mesh" mesh="crank_Link" class="visual" />
-                    <body gravcomp="1" name="gripper_finger2_finger_link" pos="0.029208 0 -0.0227133">
+                    <body gravcomp="0" name="gripper_finger2_finger_link" pos="0.029208 0 -0.0227133">
                       <inertial pos="0 0 0" quat="0.985484 0 0.169771 0" mass="0.0222871" diaginertia="9.5054e-06 7.26157e-06 2.56546e-06" />
                       <joint name="gripper_finger2_finger_joint" pos="0 0 0" axis="0 -1 0" range="-3.14 3.14" />
                       <geom type="mesh" mesh="rod_Link" class="visual" />
                     </body>
                   </body>
-                  <body gravcomp="1" name="gripper_finger1_inner_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796327 0 0 1">
+                  <body gravcomp="0" name="gripper_finger1_inner_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796327 0 0 1">
                     <inertial pos="0 0 0" quat="0.927336 0 0.37423 0" mass="0.0318004" diaginertia="1.88191e-05 1.04943e-05 8.78398e-06" />
                     <joint name="gripper_finger1_inner_knuckle_joint" pos="0 0 0" axis="0 -1 0" range="-3.14 3.14" />
                     <geom type="mesh" mesh="proximal_phalanx_Link" class="visual" />
-                    <body gravcomp="1" name="gripper_finger1_finger_tip_link" pos="0.0394969 0 0.0382752">
+                    <body gravcomp="0" name="gripper_finger1_finger_tip_link" pos="0.0394969 0 0.0382752">
                       <inertial pos="0 0 0" quat="0.981854 0 -0.189641 0" mass="0.0124305" diaginertia="3.17302e-06 3.03961e-06 7.87295e-07" />
                       <joint name="gripper_finger1_finger_tip_joint" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" />
                       <geom type="mesh" mesh="distal_phalanx_Link" class="visual" />
                     </body>
                   </body>
-                  <body gravcomp="1" name="gripper_finger2_inner_knuckle_link" pos="0.016 0 0.10586">
+                  <body gravcomp="0" name="gripper_finger2_inner_knuckle_link" pos="0.016 0 0.10586">
                     <inertial pos="0 0 0" quat="0.927336 0 0.37423 0" mass="0.0318004" diaginertia="1.88191e-05 1.04943e-05 8.78398e-06" />
                     <joint name="gripper_finger2_inner_knuckle_joint" pos="0 0 0" axis="0 -1 0" range="-3.14 3.14" />
                     <geom type="mesh" mesh="proximal_phalanx_Link" class="visual" />
-                    <body gravcomp="1" name="gripper_finger2_finger_tip_link" pos="0.0394969 0 0.0382752">
+                    <body gravcomp="0" name="gripper_finger2_finger_tip_link" pos="0.0394969 0 0.0382752">
                       <inertial pos="0 0 0" quat="0.981854 0 -0.189641 0" mass="0.0124305" diaginertia="3.17302e-06 3.03961e-06 7.87295e-07" />
                       <joint name="gripper_finger2_finger_tip_joint" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" />
                       <geom type="mesh" mesh="distal_phalanx_Link" class="visual" />

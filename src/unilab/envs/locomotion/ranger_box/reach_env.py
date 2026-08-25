@@ -300,6 +300,11 @@ class RangerBoxReachCfg(Go2ArmBaseCfg):
     model_file: str = field(default_factory=_default_ranger_box_model_file)
     max_episode_seconds: float = 30.0
     init_state: InitState = field(default_factory=InitState)
+    # Manipulation-ready arm pose (rad, j1..j6).  The arm RESETS to this folded,
+    # well-conditioned pose (NOT the gravity-hanging equilibrium), so EE goals
+    # sampled near the current EE are locally reachable.  When None, falls back
+    # to the keyframe default.  Found by scripts/manip_loco/find_ranger_box_ready_pose.py.
+    init_arm_pose: tuple[float, ...] | None = None
     control_config: RangerBoxControlConfig = field(default_factory=RangerBoxControlConfig)
     sensor: RangerBoxSensor = field(default_factory=RangerBoxSensor)
     noise_config: RangerBoxNoiseConfig = field(default_factory=RangerBoxNoiseConfig)
@@ -570,6 +575,23 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             (num_envs, H_c * _RAW_OBS_DIM), dtype=get_global_dtype()
         )
 
+        # Manipulation-ready arm pose: override the (gravity-hanging) keyframe
+        # default with the folded, well-conditioned ready pose from config.
+        # This flows into _init_qpos (reset), default_angles (obs baseline),
+        # _ik_target init, and the home-return target.
+        ready_pose = getattr(self._cfg, "init_arm_pose", None)
+        if ready_pose is not None:
+            arm_q = np.asarray(ready_pose, dtype=np.float64)
+            if arm_q.shape != (6,):
+                raise ValueError(
+                    f"env.init_arm_pose must have shape (6,), got {arm_q.shape}"
+                )
+            arm_qpos_idx = (
+                self._backend.get_joint_dof_pos_indices(self._cfg.asset.arm_joint_names) + 1
+            )
+            self._init_qpos[arm_qpos_idx] = arm_q
+            self.default_angles[:6] = arm_q
+
         self._default_arm_angles = self.default_angles[:6].copy()
 
         # Persistent IK-only arm target reference (rad).  Only the IK delta and
@@ -629,8 +651,11 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # scripts/manip_loco/calibrate_ranger_box_settle.py.  Resetting at the
         # settled pose (instead of the old 0,-0.3,0.75,0,0.45,0 nominal) removes
         # the initial sag transient and keeps obs arm_diff ≈ 0 at reset.
+        # Fallback arm control defaults (overridden by env.init_arm_pose when
+        # set): the manipulation-ready folded pose, NOT the gravity-hanging
+        # equilibrium.  See scripts/manip_loco/find_ranger_box_ready_pose.py.
         self.default_angles = np.array(
-            [0.0463, -0.0022, 0.1019, -0.0014, 0.4644, -0.0122, 0.0], dtype=dtype
+            [-0.0793, 0.0031, -2.1214, -1.6912, 2.118, 1.1986, 0.0], dtype=dtype
         )
         raw_qvel = self._backend.get_init_qvel()
         self._init_qvel = np.asarray(raw_qvel, dtype=dtype)
@@ -661,19 +686,19 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ee_local_quat,
         )
 
-        # Arm-engagement gate: blend IK toward the goal vs. return to home,
-        # based on the goal distance in the armbase frame.  When the goal is
-        # far (beyond engage_outer), the arm stays near home while the base
-        # navigates.  When the goal is close (within engage_inner), IK is
-        # fully engaged.
-        goal_dist = np.linalg.norm(self.armbase_ee_goal, axis=1)
-        engage_inner = getattr(self._cfg.control_config, "engage_inner", 0.40)
-        engage_outer = getattr(self._cfg.control_config, "engage_outer", 0.70)
-        arm_weight = np.clip(
-            (engage_outer - goal_dist) / max(engage_outer - engage_inner, 1e-6),
-            0.0,
-            1.0,
-        )
+        # Arm-engagement gate (Task 5): IK-feasibility based, NOT the old
+        # "goal closer than 0.70 m to the armbase" distance gate.  Goals are
+        # sampled in the local-EE workspace and filtered for feasibility at
+        # reset, so the arm stays engaged for any goal within the arm's
+        # physical workspace.  The gate only disengages (→ home-return) when
+        # the goal is genuinely unreachable: beyond max reach, or the DLS IK
+        # makes no correction while the goal is not yet reached.
+        pos_err_norm = np.linalg.norm(self.armbase_ee_goal - ee_local_pos, axis=1)
+        goal_reach = np.linalg.norm(self.armbase_ee_goal, axis=1)
+        in_workspace = goal_reach < 1.40  # arm max reach ~1.33 m + margin
+        at_goal = pos_err_norm < 0.02
+        making_progress = np.linalg.norm(dq_ik, axis=1) > 1e-4
+        arm_weight = np.where(in_workspace & (at_goal | making_progress), 1.0, 0.0)
 
         # Anti-windup on dq: once the target has reached the soft limit, stop
         # integrating further in the direction that would push it out — don't
@@ -1143,95 +1168,117 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         return out
 
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
+        """Sample EE goals in the local-EE workspace (Task-4 redesign).
+
+        goal = current EE + delta, with delta in the armbase frame:
+          x ~ U(-0.30, 0.30), y ~ U(-0.30, 0.30), z ~ U(-0.20, 0.30).
+        Rejection-sampled against (see ``_goal_infeasible``): below floor,
+        inside the chassis, or IK-infeasible from the current arm state
+        (joint-limit violation / no linearized progress).  Fallback after all
+        attempts: a small forward-down reach, guaranteed locally reachable
+        from the well-conditioned ready pose.
+        """
         n = len(env_ids)
         rng = np.random
         goal_cfg = self._cfg.goal_ee
-        reachable = rng.random(n) < float(goal_cfg.reachable_fraction)
-        goals = np.zeros((n, 3), dtype=np.float64)
 
-        l_lo, l_hi = goal_cfg.sphere_l_range
-        phi_lo, phi_hi = goal_cfg.sphere_phi_range
-        th_lo, th_hi = goal_cfg.sphere_theta_range
-        e_lo, e_hi = goal_cfg.extended_l_range
-
-        n_reach = int(reachable.sum())
-        if n_reach > 0:
-            r = rng.uniform(l_lo, l_hi, size=n_reach)
-            phi = rng.uniform(phi_lo, phi_hi, size=n_reach)
-            theta = rng.uniform(th_lo, th_hi, size=n_reach)
-            goals[reachable, 0] = r * np.cos(phi) * np.cos(theta)
-            goals[reachable, 1] = r * np.cos(phi) * np.sin(theta)
-            goals[reachable, 2] = r * np.sin(phi)
-
-        n_ext = n - n_reach
-        if n_ext > 0:
-            r_e = rng.uniform(e_lo, e_hi, size=n_ext)
-            phi_e = rng.uniform(phi_lo, phi_hi, size=n_ext)
-            theta_e = rng.uniform(th_lo, th_hi, size=n_ext)
-            goals[~reachable, 0] = r_e * np.cos(phi_e) * np.cos(theta_e)
-            goals[~reachable, 1] = r_e * np.cos(phi_e) * np.sin(theta_e)
-            goals[~reachable, 2] = r_e * np.sin(phi_e)
-
+        ee_local, _ = self.get_ee_local_pose()
+        ee_local = ee_local[env_ids]  # (n, 3) armbase frame
         armbase_pos = self.armbase_pos_world[env_ids]
         armbase_quat = self.armbase_quat_world[env_ids]
-        goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goals)
-        # Clamp goal z above ground level (0.05 m floor + margin)
-        goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
 
-        base_pos_w = self._backend.get_base_pos()  # (N, 3)
-        base_quat_w = self._backend.get_base_quat()  # (N, 4)
-        # Rejection-sample goals that fall inside the chassis bounding box.
-        # Retry up to 10 times; if still inside, clamp to safe height as
-        # last-resort fallback.
-        _CHASSIS_HX, _CHASSIS_HY, _CHASSIS_SAFE_Z = 0.55, 0.38, 0.48
-        for _attempt in range(10):
-            goals_base = np_quat_apply_batched(
-                np_quat_conjugate_batched(base_quat_w[env_ids]),
-                goals_world - base_pos_w[env_ids],
-            )
-            inside = (
-                (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
-                & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
-                & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
-            )
-            if not inside.any():
-                break
-            n_bad = inside.sum()
-            r_new = rng.uniform(l_lo, l_hi, size=n_bad)
-            phi_new = rng.uniform(phi_lo, phi_hi, size=n_bad)
-            theta_new = rng.uniform(th_lo, th_hi, size=n_bad)
-            new = np.stack(
+        def _sample_delta(size: int) -> np.ndarray:
+            return np.stack(
                 [
-                    r_new * np.cos(phi_new) * np.cos(theta_new),
-                    r_new * np.cos(phi_new) * np.sin(theta_new),
-                    r_new * np.sin(phi_new),
+                    rng.uniform(-0.30, 0.30, size=size),
+                    rng.uniform(-0.30, 0.30, size=size),
+                    rng.uniform(-0.20, 0.30, size=size),
                 ],
                 axis=1,
             )
-            goals[inside] = new
-            goals_world[inside] = armbase_pos[inside] + np_quat_apply_batched(
-                armbase_quat[inside], new
+
+        delta = _sample_delta(n)
+        goal_local = ee_local + delta
+        goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goal_local)
+        goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
+
+        bad = self._goal_infeasible(env_ids, goal_local, goals_world)
+        for _attempt in range(goal_cfg.num_resample_attempts):
+            if not bad.any():
+                break
+            n_bad = int(bad.sum())
+            new_delta = _sample_delta(n_bad)
+            delta[bad] = new_delta
+            goal_local[bad] = ee_local[bad] + new_delta
+            goals_world[bad] = armbase_pos[bad] + np_quat_apply_batched(
+                armbase_quat[bad], goal_local[bad]
             )
-            goals_world[inside, 2] = np.maximum(goals_world[inside, 2], 0.15)
-        else:
-            # Fallback: clamp remaining inside-goals z upward
-            goals_base = np_quat_apply_batched(
-                np_quat_conjugate_batched(base_quat_w[env_ids]),
-                goals_world - base_pos_w[env_ids],
+            goals_world[bad, 2] = np.maximum(goals_world[bad, 2], 0.15)
+            bad = self._goal_infeasible(env_ids, goal_local, goals_world)
+
+        if bad.any():
+            # Fallback: small forward-down reach (guaranteed locally reachable).
+            fb = np.array([0.10, 0.0, -0.05], dtype=np.float64)
+            goal_local[bad] = ee_local[bad] + fb[None, :]
+            goals_world[bad] = armbase_pos[bad] + np_quat_apply_batched(
+                armbase_quat[bad], goal_local[bad]
             )
-            inside = (
-                (np.abs(goals_base[:, 0]) < _CHASSIS_HX)
-                & (np.abs(goals_base[:, 1]) < _CHASSIS_HY)
-                & (goals_base[:, 2] < _CHASSIS_SAFE_Z)
-            )
-            if inside.any():
-                goals_base[inside, 2] = _CHASSIS_SAFE_Z
-                goals_world[inside] = base_pos_w[env_ids][inside] + np_quat_apply_batched(
-                    base_quat_w[env_ids][inside], goals_base[inside]
-                )
+            goals_world[bad, 2] = np.maximum(goals_world[bad, 2], 0.15)
 
         self.world_ee_goal[env_ids] = goals_world
         self._arm_goal_timer[env_ids] = 0
+
+    def _goal_infeasible(
+        self,
+        env_ids: np.ndarray,
+        goal_local: np.ndarray,
+        goals_world: np.ndarray,
+    ) -> np.ndarray:
+        """Return True where the sampled goal is not reachable from the current arm state."""
+        base_pos_w = self._backend.get_base_pos()[env_ids]
+        base_quat_w = self._backend.get_base_quat()[env_ids]
+
+        # 1. Inside the chassis bounding box.
+        goals_base = np_quat_apply_batched(
+            np_quat_conjugate_batched(base_quat_w), goals_world - base_pos_w
+        )
+        inside_chassis = (
+            (np.abs(goals_base[:, 0]) < 0.55)
+            & (np.abs(goals_base[:, 1]) < 0.38)
+            & (goals_base[:, 2] < 0.48)
+        )
+        # 2. Below floor.
+        below_floor = goals_world[:, 2] < 0.15
+
+        # 3. IK feasibility from the current (ready-pose) arm state: the
+        #    damped-LS correction must stay inside the soft range and move the
+        #    EE toward the goal.
+        ee_local, _ = self.get_ee_local_pose()
+        ee_local = ee_local[env_ids]
+        q_actual = self.get_arm_dof_pos()[env_ids]
+        pos_err = goal_local - ee_local
+        jacp_w, _ = self._backend.get_site_jacobian_w(
+            self._ee_site_id, self._arm_jacobian_dof_indices
+        )
+        ref_rot = np_matrix_from_quat(
+            self._backend.get_sensor_data(self._cfg.sensor.arm_ref_world_quat)[env_ids]
+        )
+        jacp_b = np.matmul(np.swapaxes(ref_rot, 1, 2), jacp_w[env_ids])  # (n,3,6)
+        eye3 = np.eye(3, dtype=jacp_b.dtype)[None, :, :]
+        lhs = np.matmul(jacp_b, np.swapaxes(jacp_b, 1, 2)) + eye3 * (self._cfg.ik.damping ** 2)
+        rhs = pos_err[:, :, None]
+        dq = np.matmul(np.swapaxes(jacp_b, 1, 2), np.linalg.solve(lhs, rhs))[:, :, 0]
+
+        margin = 0.05 * (self._arm_joint_upper - self._arm_joint_lower)
+        lo = self._arm_soft_lower + margin
+        hi = self._arm_soft_upper - margin
+        q_target = q_actual + dq
+        out_of_range = ((q_target < lo) | (q_target > hi)).any(axis=1)
+
+        pred = np.matmul(jacp_b, dq[:, :, None])[:, :, 0]
+        no_progress = (pred * pos_err).sum(axis=1) <= 0
+
+        return inside_chassis | below_floor | out_of_range | no_progress
 
     def _world_goal_to_armbase(self, world_goal, armbase_pos, armbase_quat):
         rel = world_goal - armbase_pos

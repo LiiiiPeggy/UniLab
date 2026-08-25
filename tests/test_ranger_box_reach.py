@@ -265,10 +265,10 @@ class TestRangerBoxReachEnv:
 
     def test_default_angles_7_dims(self, env4):
         assert env4.default_angles.shape == (7,)
-        # default_angles = gravity-settle equilibrium (calibrate_ranger_box_settle),
+        # default_angles = manipulation-ready folded pose (find_ranger_box_ready_pose),
         # NOT the old nominal 0,-0.3,0.75,...  The reset keyframe arm qpos must
-        # match it so reset starts at the physics resting pose (no sag transient).
-        assert env4.default_angles[1] == pytest.approx(-0.0022, abs=1e-3)
+        # match it so reset starts at the folded ready pose.
+        assert env4.default_angles[1] == pytest.approx(0.0031, abs=1e-3)
         assert np.allclose(env4._init_qpos[15:21], env4.default_angles[:6], atol=1e-4)
         assert np.allclose(env4._init_qpos[15:21], env4._default_arm_angles, atol=1e-4)
 
@@ -494,7 +494,10 @@ class TestIKAntiWindup:
             env1.step(np.zeros((1, 9)))
         q_actual = env1.get_arm_dof_pos()[0]
         err = np.abs(env1._ik_target[0] - q_actual)
-        assert err.max() < env1._cfg.control_config.max_target_error + 1e-6
+        # Allow one step of arm motion past the clip (the clip runs in
+        # apply_action, then physics moves the arm before this read); a true
+        # windup would pin _ik_target ~2.5 rad from q_actual at the soft limits.
+        assert err.max() < env1._cfg.control_config.max_target_error + 0.05
 
     def test_ik_target_never_saturates_soft_limits(self, env1):
         # The target must never pin at the soft joint limits (the windup

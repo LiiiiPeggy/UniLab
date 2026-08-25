@@ -21,15 +21,14 @@
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" contype="4" conaffinity="4"/>
   </worldbody>
 
-  <!-- home arm pose = gravity-settle equilibrium of the current physics
-       (gravcomp=1, joint damping=1, current actuator kp/force limits), measured
-       by scripts/manip_loco/calibrate_ranger_box_settle.py:
-       j2 settles -0.3 -> ~0.00, j3 0.75 -> ~0.10 under residual gravity.
-       Resetting AT the settled pose eliminates the initial sag transient. -->
+  <!-- home arm pose = manipulation-ready pose (folded, well-conditioned, EE
+       0.45 m from armbase), found by scripts/manip_loco/find_ranger_box_ready_pose.py.
+       With gravcomp disabled the position actuators hold it to ~0.02 rad drift.
+       The env also overrides it via env.init_arm_pose (source of truth). -->
   <keyframe>
     <key name="home"
-      qpos="0 0 0.415 1 0 0 0 0 0 0 0 0 0 0 0 0.0463 -0.0022 0.1019 -0.0014 0.4644 -0.0122 0 0 0 0 0 0 0 0"
-      ctrl="0.0463 -0.0022 0.1019 -0.0014 0.4644 -0.0122 0"
+      qpos="0 0 0.415 1 0 0 0 0 0 0 0 0 0 0 0 -0.0793 0.0031 -2.1214 -1.6912 2.118 1.1986 0 0 0 0 0 0 0 0"
+      ctrl="-0.0793 0.0031 -2.1214 -1.6912 2.118 1.1986 0"
     />
   </keyframe>
 </mujoco>
