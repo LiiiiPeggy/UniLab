@@ -79,11 +79,18 @@ env:
     scale_ee_pos: 0.02
     scale_ee_goal: 0.01
   ik:
-    damping: 0.05
-    gain: 0.2
-    dq_clip: 0.03
+    damping: 0.02
+    gain: 1.5
+    dq_clip: 0.3
     use_orientation: false
     orientation_mode: target
+    # Resolved-rate target controller (replaces the chase-current integration
+    # that overshot).  controller_mode is "resolved_rate" (B), "resolved_rate_
+    # damped" (C, velocity_damping), or "integrated" (A, old).  Ablation
+    # (benchmark_ranger_box_ik_controller.py) showed velocity_damping HURTS
+    # success (kv=0.05: 0.51 vs kv=0: 0.62), so kv is kept at 0.
+    velocity_damping: 0.0
+    controller_mode: resolved_rate
   goal_ee:
     sphere_l_range: [0.20, 0.50]
     extended_l_range: [0.50, 1.20]

@@ -700,55 +700,67 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         making_progress = np.linalg.norm(dq_ik, axis=1) > 1e-4
         arm_weight = np.where(in_workspace & (at_goal | making_progress), 1.0, 0.0)
 
-        # Anti-windup on dq: once the target has reached the soft limit, stop
-        # integrating further in the direction that would push it out — don't
-        # let the controller saturate by computing +clip at every frame.
+        # Anti-windup on dq: once the ACTUAL joint is at the soft limit, stop
+        # commanding further motion in the direction that would push it out.
         _limit_eps = 0.02
-        _at_upper = self._ik_target >= self._arm_soft_upper - _limit_eps
-        _at_lower = self._ik_target <= self._arm_soft_lower + _limit_eps
+        q_actual = self.get_arm_dof_pos()
+        qdot = self.get_arm_dof_vel()
+        _at_upper = q_actual >= self._arm_soft_upper - _limit_eps
+        _at_lower = q_actual <= self._arm_soft_lower + _limit_eps
         dq_ik = np.where(_at_upper & (dq_ik > 0), 0.0, dq_ik)
         dq_ik = np.where(_at_lower & (dq_ik < 0), 0.0, dq_ik)
 
-        # Persistent IK target ANCHORED to actual joint positions (not a pure
-        # integrator).  The candidate target is the actual pose plus this step's
-        # weighted IK delta plus a home-return term when the goal is out of the
-        # engagement gate.  This prevents the desired target from drifting far
-        # away from the true arm state (structural anti-windup).
-        q_actual = self.get_arm_dof_pos()
+        ik = self._cfg.ik
         home_return_gain = getattr(self._cfg.control_config, "home_return_gain", 0.02)
-        q_candidate = (
-            q_actual
-            + arm_weight[:, None] * self._cfg.ik.gain * dq_ik
-            + (1.0 - arm_weight[:, None]) * home_return_gain * (self._default_arm_angles - q_actual)
-        )
-        # Smooth toward the candidate at a bounded per-step rate.
-        delta_target = q_candidate - self._ik_target
-        max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
-        if max_delta > 0:
-            delta_target = np.clip(delta_target, -max_delta, max_delta)
-        self._ik_target = self._ik_target + delta_target
-        # Tracking-error bound: target stays within max_target_error of actual.
-        max_target_error = getattr(self._cfg.control_config, "max_target_error", 0.08)
-        self._ik_target = np.clip(
-            self._ik_target,
-            q_actual - max_target_error,
-            q_actual + max_target_error,
-        )
-        # Soft joint limits last.
-        self._ik_target = np.clip(
-            self._ik_target,
-            self._arm_soft_lower,
-            self._arm_soft_upper,
-        )
-
-        # Instantaneous RL residual — added to the persistent target but NOT
-        # integrated, so a constant policy bias cannot creep the arm.
+        home_delta = self._default_arm_angles - q_actual
         arm_residual = arm_action * self._cfg.control_config.arm_action_scale
-        arm_ctrl = np.clip(
-            self._ik_target + arm_residual,
-            self._arm_soft_lower,
-            self._arm_soft_upper,
-        )
+        mode = getattr(ik, "controller_mode", "resolved_rate_damped")
+
+        if mode == "integrated":
+            # (ablation A) OLD chase-current target integration — kept only for
+            # controller-ablation comparison.  The target is anchored to the
+            # actual pose, but its constant small offset ahead of q_actual makes
+            # the position actuator keep pushing, causing overshoot / divergence.
+            q_candidate = (
+                q_actual
+                + arm_weight[:, None] * ik.gain * dq_ik
+                + (1.0 - arm_weight[:, None]) * home_return_gain * home_delta
+            )
+            delta_target = q_candidate - self._ik_target
+            max_delta = getattr(self._cfg.control_config, "arm_max_delta_per_step", 0.1)
+            if max_delta > 0:
+                delta_target = np.clip(delta_target, -max_delta, max_delta)
+            self._ik_target = self._ik_target + delta_target
+            max_target_error = getattr(self._cfg.control_config, "max_target_error", 0.08)
+            self._ik_target = np.clip(
+                self._ik_target, q_actual - max_target_error, q_actual + max_target_error
+            )
+            self._ik_target = np.clip(self._ik_target, self._arm_soft_lower, self._arm_soft_upper)
+            arm_ctrl = np.clip(
+                self._ik_target + arm_residual, self._arm_soft_lower, self._arm_soft_upper
+            )
+        else:
+            # Resolved-rate position target (modes B/C): NO integration.
+            #   dq_cmd = dq_ik - kv * qdot   (velocity damping, mode C)
+            #   q_target = q_actual + arm_weight * gain * dq_cmd + home-return
+            # The actuator pulls toward q_target, which is always anchored to the
+            # actual pose, so it never commands a persistent lead that would
+            # overshoot.  Soft-limit clip is the joint-limit anti-windup.
+            dq_cmd = dq_ik
+            if mode == "resolved_rate_damped":
+                kv = float(getattr(ik, "velocity_damping", 0.0))
+                dq_cmd = dq_ik - kv * qdot
+            dq_cmd = np.clip(dq_cmd, -ik.dq_clip, ik.dq_clip)
+            q_target = (
+                q_actual
+                + arm_weight[:, None] * ik.gain * dq_cmd
+                + (1.0 - arm_weight[:, None]) * home_return_gain * home_delta
+            )
+            q_target = np.clip(q_target, self._arm_soft_lower, self._arm_soft_upper)
+            self._ik_target[:] = q_target  # mirror for diagnostics / tests
+            arm_ctrl = np.clip(
+                q_target + arm_residual, self._arm_soft_lower, self._arm_soft_upper
+            )
         grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 

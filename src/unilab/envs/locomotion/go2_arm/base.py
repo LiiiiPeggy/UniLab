@@ -76,6 +76,12 @@ class IKConfig:
     # - zero_error: include the rotational Jacobian with zero orientation error,
     #   matching go2_arx's position IK with orientation-change regularization.
     orientation_mode: str = "target"
+    # Resolved-rate target controller (RangerBoxReach apply_action):
+    #   q_target = q_actual + arm_weight * gain * (dq_ik - velocity_damping * qdot)
+    #   dq clipped at dq_clip.  "integrated" keeps the old chase-current
+    #   _ik_target integration (used only for ablation A).
+    velocity_damping: float = 0.0
+    controller_mode: str = "resolved_rate_damped"
 
 
 @dataclass
