@@ -279,8 +279,17 @@ def play_rsl_rl(cfg: DictConfig, device: str) -> str | None:
                 },
                 on_plan=_log_plan,
                 extra_data_getter=(
-                    (lambda: getattr(env, "curr_ee_goal_world", None))
-                    if hasattr(env, "curr_ee_goal_world")
+                    (
+                        lambda: (
+                            env.eval_visualization_markers()
+                            if hasattr(env, "eval_visualization_markers")
+                            else getattr(env, "curr_ee_goal_world", None)
+                        )
+                    )
+                    if (
+                        hasattr(env, "eval_visualization_markers")
+                        or hasattr(env, "curr_ee_goal_world")
+                    )
                     else None
                 ),
             )

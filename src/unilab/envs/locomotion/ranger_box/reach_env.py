@@ -1083,6 +1083,20 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         )
         self._arm_goal_timer = np.zeros((self._num_envs,), dtype=np.int32)
 
+    @property
+    def curr_ee_goal_world(self) -> np.ndarray:
+        """Goal world position — used by playback for the red goal marker."""
+        return self.world_ee_goal
+
+    def eval_visualization_markers(self) -> np.ndarray | None:
+        """Return (num_envs, 6) = [goal_world, ee_world] for playback markers.
+
+        goal drawn red, current EE drawn green.  ``None`` disables markers.
+        """
+        ee_local, _ = self.get_ee_local_pose()
+        ee_world = self.armbase_pos_world + np_quat_apply_batched(self.armbase_quat_world, ee_local)
+        return np.concatenate([self.world_ee_goal, ee_world], axis=1)
+
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
         n = len(env_ids)
         rng = np.random

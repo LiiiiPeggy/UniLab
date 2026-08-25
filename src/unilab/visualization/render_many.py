@@ -345,30 +345,55 @@ def render_frame_job(args):
             mujoco.mjv_addGeoms(model, data, vopt, pert, catmask_static, renderer.scene)
             vopt.geomgroup[0] = geomgroup0
 
-    # 3. Overlay marker spheres (e.g. EE goal positions)
+    # 3. Overlay marker spheres.  marker_positions is (num_envs, 3) for a
+    #    single red goal sphere, or (num_envs, 6) for goal(red) + EE(green).
     if marker_positions is not None:
-        scene = renderer.scene
-        sphere_rgba = np.array([1.0, 0.2, 0.2, 0.8], dtype=np.float32)
-        sphere_size = np.array([0.025, 0.0, 0.0], dtype=np.float32)
-        eye3 = np.eye(3, dtype=np.float32).flatten()
-        for env_idx in range(num_envs):
-            if scene.ngeom >= scene.maxgeom:
-                break
-            pos = marker_positions[env_idx].astype(np.float32).copy()
-            if offsets is not None:
-                pos[0] += float(offsets[env_idx, 0])
-                pos[1] += float(offsets[env_idx, 1])
-            mujoco.mjv_initGeom(
-                scene.geoms[scene.ngeom],
-                type=mujoco.mjtGeom.mjGEOM_SPHERE,
-                size=sphere_size,
-                pos=pos,
-                mat=eye3,
-                rgba=sphere_rgba,
-            )
-            scene.ngeom += 1
+        _add_marker_spheres(
+            renderer.scene,
+            marker_positions,
+            offsets,
+            np.arange(num_envs),
+        )
 
     return renderer.render()
+
+
+def _add_marker_spheres(scene, marker_positions, offsets, env_indices):
+    """Draw goal (red) + optionally EE (green) overlay spheres.
+
+    ``marker_positions`` is (num_envs, 3) for a single red goal marker, or
+    (num_envs, 6) where cols [0:3] = goal, [3:6] = current EE position.
+    """
+    goal_rgba = np.array([1.0, 0.2, 0.2, 0.9], dtype=np.float32)  # red
+    ee_rgba = np.array([0.2, 1.0, 0.2, 0.9], dtype=np.float32)  # green
+    goal_size = np.array([0.03, 0.0, 0.0], dtype=np.float32)
+    ee_size = np.array([0.02, 0.0, 0.0], dtype=np.float32)
+    eye3 = np.eye(3, dtype=np.float32).flatten()
+    mp = np.asarray(marker_positions)
+    has_ee = mp.ndim == 2 and mp.shape[1] >= 6
+
+    for global_i in env_indices:
+        if scene.ngeom + (2 if has_ee else 1) >= scene.maxgeom:
+            break
+        _add_one_sphere(scene, mp[global_i, 0:3], goal_size, goal_rgba, eye3, offsets, global_i)
+        if has_ee:
+            _add_one_sphere(scene, mp[global_i, 3:6], ee_size, ee_rgba, eye3, offsets, global_i)
+
+
+def _add_one_sphere(scene, pos, size, rgba, eye3, offsets, global_i):
+    p = np.asarray(pos, dtype=np.float32).copy()
+    if offsets is not None:
+        p[0] += float(offsets[global_i, 0])
+        p[1] += float(offsets[global_i, 1])
+    mujoco.mjv_initGeom(
+        scene.geoms[scene.ngeom],
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=size,
+        pos=p,
+        mat=eye3,
+        rgba=rgba,
+    )
+    scene.ngeom += 1
 
 
 def render_states_get_frames(
@@ -594,26 +619,12 @@ def render_frame_tracking_job(args):
 
     # Overlay marker spheres for rendered envs
     if marker_positions is not None:
-        scene = renderer.scene
-        sphere_rgba = np.array([1.0, 0.2, 0.2, 0.8], dtype=np.float32)
-        sphere_size = np.array([0.025, 0.0, 0.0], dtype=np.float32)
-        eye3 = np.eye(3, dtype=np.float32).flatten()
-        for global_i in env_indices:
-            if scene.ngeom >= scene.maxgeom:
-                break
-            pos = marker_positions[global_i].astype(np.float32).copy()
-            if offsets is not None:
-                pos[0] += float(offsets[global_i, 0])
-                pos[1] += float(offsets[global_i, 1])
-            mujoco.mjv_initGeom(
-                scene.geoms[scene.ngeom],
-                type=mujoco.mjtGeom.mjGEOM_SPHERE,
-                size=sphere_size,
-                pos=pos,
-                mat=eye3,
-                rgba=sphere_rgba,
-            )
-            scene.ngeom += 1
+        _add_marker_spheres(
+            renderer.scene,
+            marker_positions,
+            offsets,
+            env_indices,
+        )
 
     return renderer.render()
 
