@@ -92,9 +92,17 @@ import mujoco  # noqa: E402
 import numpy as np
 
 
-def get_grid_offsets(num_envs, spacing=1.0):
-    rows = int(math.ceil(math.sqrt(num_envs)))
-    cols = int(math.ceil(num_envs / rows))
+def get_grid_offsets(num_envs, spacing=1.0, grid_cols=None):
+    """Row-major grid offsets (x = row, y = col).
+
+    ``grid_cols`` fixes the column count (rows = ceil(n / cols), e.g. 8 envs ×
+    4 cols → 2×4); ``None`` falls back to the near-square sqrt layout.
+    """
+    if grid_cols is not None and int(grid_cols) > 0:
+        cols = int(grid_cols)
+    else:
+        rows = int(math.ceil(math.sqrt(num_envs)))
+        cols = int(math.ceil(num_envs / rows))
     offsets = np.zeros((num_envs, 2))
     for i in range(num_envs):
         r = i // cols
@@ -315,12 +323,15 @@ def render_frame_job(args):
             cam.lookat = [center_x, center_y, 0.75]
         else:
             cam.lookat = [float(cam_lookat[0]), float(cam_lookat[1]), float(cam_lookat[2])]
-        # Auto-fit the FREE-camera distance to the env grid when not explicitly
-        # given, so a wide render_spacing (e.g. 10-12 m for a 4-env grid) keeps
-        # every robot in frame.  An explicit cam_distance always wins.
+        # Auto-fit the FREE-camera distance via projected-bounds of the real
+        # grid occupancy when not explicitly given.  An explicit cam_distance
+        # always wins.
         if cam_distance is None or float(cam_distance) <= 0.0:
             cam_distance = compute_grid_camera_distance(
-                offsets, elevation_deg=float(cam_elevation)
+                offsets,
+                elevation_deg=float(cam_elevation),
+                azimuth_deg=float(cam_azimuth),
+                aspect=float(width) / float(height),
             )
         cam.distance = cam_distance
         cam.elevation = cam_elevation
@@ -451,61 +462,100 @@ def _add_one_sphere(scene, pos, size, rgba, eye3, offsets, global_i):
 
 _FOVY_DEG = 45.0
 
+# Generous per-robot occupancy extents (half-x, half-y, top height) used to
+# expand each grid cell before fitting: covers the Ranger chassis + arm reach +
+# the debug-text label so nothing is clipped at the frame edge.
+_ROBOT_HALF_EXTENTS = (0.6, 0.6)
+_ROBOT_TOP_Z = 1.15
+
+
+def _grid_occupancy_corners(offsets):
+    """World-space AABB corners covering every grid cell plus robot extent."""
+    offs = np.asarray(offsets, dtype=np.float64).reshape(-1, 2)
+    hx, hy = _ROBOT_HALF_EXTENTS
+    x0, x1 = float(offs[:, 0].min()) - hx, float(offs[:, 0].max()) + hx
+    y0, y1 = float(offs[:, 1].min()) - hy, float(offs[:, 1].max()) + hy
+    z0, z1 = 0.0, _ROBOT_TOP_Z
+    return np.array(
+        [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
+        dtype=np.float64,
+    )
+
 
 def compute_grid_camera_distance(
     offsets,
     *,
     fov_y_deg=_FOVY_DEG,
     elevation_deg=-20.0,
-    margin=1.5,
+    azimuth_deg=90.0,
+    margin=0.4,
     aspect=1280.0 / 720.0,
+    lookat_z=0.75,
 ):
-    """Auto-fit a FREE-camera distance so the whole env grid stays in frame.
+    """Exact projected-bounds fit for a FREE-camera distance.
 
-    Fits the grid's XY diagonal (plus ``margin``) inside the horizontal FOV at
-    the given elevation.  The camera looks down from ``elevation_deg``, so its
-    horizontal distance to the grid centre is ``dist * cos(elevation)``; we also
-    require the vertical FOV to cover the same half-span (with margin) so the
-    near and far grid edges are not clipped.  A caller-provided ``cam_distance``
-    overrides this value entirely.
+    Builds the world-space AABB of the whole grid (cells + robot extent), then
+    asks: with the camera on the view axis through the grid centre at
+    ``elevation_deg``/``azimuth_deg``, what is the minimum distance D such that
+    every corner projects inside the frustum?
 
-    Args:
-        offsets: (num_envs, 2) grid offsets.
-        fov_y_deg: vertical field of view (matches the MuJoCo renderer).
-        elevation_deg: FREE-camera elevation (negative = above lookat).
-        margin: extra world-space clearance around the grid diagonal.
-        aspect: render width / height, used to derive the horizontal FOV.
+    With ``C`` the lookat and ``dir_out`` the unit vector from C toward the
+    camera, a corner ``p`` has screen-plane offsets ``h = r·right`` and
+    ``u = r·up`` (``r = p - C``; both independent of D because right/up ⊥
+    dir_out) and depth ``depth = D - r·dir_out``.  The pinhole constraints
+    ``|h| <= tanH·depth`` and ``|u| <= tanV·depth`` give per-corner minima
 
-    Returns:
-        Camera distance from the lookat point (metres).
+        D >= r·dir_out + max((|h|+margin)/tanH, (|u|+margin)/tanV)
+
+    and D is the max over corners — this handles tilt, near/far asymmetry and
+    object height exactly, instead of the previous conservative XY-diagonal
+    heuristic that pushed the camera very far as spacing grew.
+
+    A caller-provided ``cam_distance`` overrides this value entirely.
     """
-    if offsets is None or len(offsets) <= 1:
-        span = 2.0
-    else:
-        sx = float(np.max(offsets[:, 0]) - np.min(offsets[:, 0]))
-        sy = float(np.max(offsets[:, 1]) - np.min(offsets[:, 1]))
-        span = max(1.0, math.hypot(sx, sy))
+    offs = np.asarray(offsets, dtype=np.float64) if offsets is not None else np.zeros((1, 2))
+    if offs.size == 0:
+        offs = np.zeros((1, 2))
+    centre = np.array([float(offs[:, 0].mean()), float(offs[:, 1].mean()), float(lookat_z)])
+    corners = _grid_occupancy_corners(offs)
+
     fov_x = 2.0 * math.atan(math.tan(math.radians(fov_y_deg) / 2.0) * aspect)
-    half = 0.5 * span + margin
-    elev = math.radians(elevation_deg)
-    # Horizontal-FOV fit, de-risked for the near-edge occlusion at this elevation.
-    dist_h = half / (math.cos(elev) * math.tan(fov_x / 2.0))
-    # Vertical-FOV fit: the grid plane (at lookat height) must fit the half-FOV.
-    dist_v = half / math.tan(math.radians(fov_y_deg) / 2.0)
-    return float(max(dist_h, dist_v))
+    tan_h, tan_v = math.tan(fov_x / 2.0), math.tan(math.radians(fov_y_deg) / 2.0)
+
+    # MuJoCo FREE-camera convention, calibrated against rendered marker
+    # centroids: the forward axis is [cos(el)cos(az), cos(el)sin(az), sin(el)]
+    # (NEGATIVE elevation = camera above the lookat plane looking down), the
+    # camera sits at lookat − distance·forward, right = normalize(fwd × ẑ),
+    # up = right × forward.
+    a0, a1 = math.radians(azimuth_deg), math.radians(elevation_deg)
+    dir_out = np.array([-math.cos(a1) * math.cos(a0), -math.cos(a1) * math.sin(a0), -math.sin(a1)])
+    right = np.array([math.sin(a0), -math.cos(a0), 0.0])
+    up = np.array([-math.cos(a0) * math.sin(a1), -math.sin(a0) * math.sin(a1), math.cos(a1)])
+
+    r = corners - centre[None, :]
+    h = np.abs(r @ right) + margin
+    u = np.abs(r @ up) + margin
+    s = r @ dir_out
+    need = np.maximum(h / tan_h, u / tan_v)
+    return float(max(np.max(s + need), 0.75))
 
 
 def _camera_basis_free(cam):
-    """Return (pos, forward, right, up) for an mjCAMERA_FREE camera."""
+    """Return (pos, forward, right, up) for an mjCAMERA_FREE camera.
+
+    Calibrated against rendered marker centroids: the forward axis is
+    ``[cos(el)cos(az), cos(el)sin(az), sin(el)]`` — NEGATIVE elevation puts
+    the camera above the lookat plane looking down, and azimuth is measured
+    from +x toward +y (azimuth=90 → camera on the −y side). The camera sits
+    at ``lookat − distance·forward``.
+    """
     a0 = np.deg2rad(cam.azimuth)
     a1 = np.deg2rad(cam.elevation)
     lookat = np.asarray(cam.lookat, dtype=np.float64)
-    pos = lookat + cam.distance * np.array(
-        [np.cos(a1) * np.sin(a0), -np.cos(a1) * np.cos(a0), np.sin(a1)]
-    )
-    fwd = -(pos - lookat) / cam.distance
-    right = np.array([np.cos(a0), np.sin(a0), 0.0])
-    up = np.array([-np.sin(a1) * np.sin(a0), np.sin(a1) * np.cos(a0), np.cos(a1)])
+    fwd = np.array([np.cos(a1) * np.cos(a0), np.cos(a1) * np.sin(a0), np.sin(a1)])
+    pos = lookat - cam.distance * fwd
+    right = np.array([np.sin(a0), -np.cos(a0), 0.0])
+    up = np.array([-np.cos(a0) * np.sin(a1), -np.sin(a0) * np.sin(a1), np.cos(a1)])
     return pos, fwd, right, up
 
 
@@ -540,12 +590,18 @@ def _draw_text_overlay(frame, screen_positions, texts):
         font = ImageFont.truetype("DejaVuSans.ttf", 18)
     except Exception:
         font = ImageFont.load_default()
-    for (sxy, txt) in zip(screen_positions, texts):
+    for sxy, txt in zip(screen_positions, texts):
         if sxy is None or not txt:
             continue
         sx, sy = sxy
-        draw.text((sx + 4, sy - 24), txt, font=font, fill=(255, 255, 60),
-                  stroke_width=2, stroke_fill=(0, 0, 0))
+        draw.text(
+            (sx + 4, sy - 24),
+            txt,
+            font=font,
+            fill=(255, 255, 60),
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+        )
     return np.asarray(img)
 
 
@@ -561,6 +617,7 @@ def render_states_get_frames(
     cam_azimuth=90,
     cam_lookat=None,
     render_spacing=1.0,
+    grid_cols=None,
     marker_positions_list=None,
     text_overlays_list=None,
 ):
@@ -579,6 +636,7 @@ def render_states_get_frames(
         cam_azimuth: Camera azimuth angle in degrees.
         cam_lookat: Optional [x, y, z] lookat override for the free camera.
         render_spacing: Grid spacing used to offset each env in composed video frames.
+        grid_cols: Fixed grid column count (rows = ceil(n/cols)); None = near-square.
         marker_positions_list: Optional list of (num_envs, 3+) arrays for overlay spheres.
         text_overlays_list: Optional list of per-env debug strings (one list per frame).
     Returns:
@@ -589,7 +647,7 @@ def render_states_get_frames(
         return []
 
     num_envs = state_list[0].shape[0]
-    offsets = get_grid_offsets(num_envs, spacing=render_spacing)
+    offsets = get_grid_offsets(num_envs, spacing=render_spacing, grid_cols=grid_cols)
     shape = (width, height)
     viewport = (width, height)
     n_frames = len(state_list)
@@ -614,12 +672,8 @@ def render_states_get_frames(
         )
         for s, m, t in zip(
             state_list,
-            marker_positions_list
-            if marker_positions_list is not None
-            else [None] * n_frames,
-            text_overlays_list
-            if text_overlays_list is not None
-            else [None] * n_frames,
+            marker_positions_list if marker_positions_list is not None else [None] * n_frames,
+            text_overlays_list if text_overlays_list is not None else [None] * n_frames,
         )
     ]
 
@@ -813,6 +867,7 @@ def render_states_get_frames_tracking(
     cam_elevation=-20,
     cam_azimuth=90,
     render_spacing=1.0,
+    grid_cols=None,
     marker_positions_list=None,
     text_overlays_list=None,
 ):
@@ -838,7 +893,7 @@ def render_states_get_frames_tracking(
         return []
 
     num_envs = state_list[0].shape[0]
-    offsets = get_grid_offsets(num_envs, spacing=render_spacing)
+    offsets = get_grid_offsets(num_envs, spacing=render_spacing, grid_cols=grid_cols)
     shape = (width, height)
     viewport = (width, height)
     n_frames = len(state_list)
@@ -869,12 +924,8 @@ def render_states_get_frames_tracking(
         )
         for s, m, t in zip(
             state_list,
-            marker_positions_list
-            if marker_positions_list is not None
-            else [None] * n_frames,
-            text_overlays_list
-            if text_overlays_list is not None
-            else [None] * n_frames,
+            marker_positions_list if marker_positions_list is not None else [None] * n_frames,
+            text_overlays_list if text_overlays_list is not None else [None] * n_frames,
         )
     ]
 

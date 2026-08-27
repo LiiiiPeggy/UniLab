@@ -33,6 +33,9 @@ class EnvCfg:
     max_episode_seconds: Optional[float] = None
     ctrl_dt: float = 0.01
     render_spacing: float = 1.0
+    # Fixed grid column count for playback layouts (rows = ceil(n / cols));
+    # None keeps the near-square sqrt layout.
+    render_grid_cols: Optional[int] = None
     render_offset_mode: str = "grid"
     motrix_max_iterations: Optional[int] = None
     post_step_forward_sensor: bool = False
@@ -87,6 +90,7 @@ class ABEnv(abc.ABC):
         num_steps: int | None,
         output_video: str | PathLike[str] | None = None,
         render_spacing: float | None = None,
+        render_grid_cols: int | None = None,
         render_offset_mode: str | None = None,
         headless: bool | None = None,
         record_video: bool | None = None,
@@ -106,6 +110,7 @@ class ABEnv(abc.ABC):
         initialize: Callable[[], Any],
         step: Callable[[Any], Any],
         render_spacing: float | None = None,
+        render_grid_cols: int | None = None,
         render_offset_mode: str | None = None,
         frame_state_getter: Callable[[], np.ndarray] | None = None,
         camera_kwargs: dict[str, Any] | None = None,
@@ -128,6 +133,7 @@ class ABEnv(abc.ABC):
             num_steps=plan.num_steps,
             output_video=plan.output_video,
             render_spacing=render_spacing,
+            render_grid_cols=render_grid_cols,
             render_offset_mode=render_offset_mode,
             headless=plan.headless,
             record_video=plan.record_video,

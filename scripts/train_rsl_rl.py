@@ -86,12 +86,14 @@ def run_motrix_rsl_play_loop(
     render_spacing: float,
     render_offset_mode: str,
     num_steps: int | None = None,
+    render_grid_cols: int | None = None,
 ) -> None:
     env = wrapped_env.env
 
     with torch.inference_mode():
         env.run_playback(
             render_spacing=render_spacing,
+            render_grid_cols=render_grid_cols,
             render_offset_mode=render_offset_mode,
             num_steps=num_steps,
             initialize=lambda: wrapped_env.reset()[0],
@@ -265,6 +267,7 @@ def play_rsl_rl(cfg: DictConfig, device: str) -> str | None:
                 render_spacing=float(
                     getattr(cfg.training, "render_spacing", getattr(env.cfg, "render_spacing", 1.0))
                 ),
+                render_grid_cols=getattr(cfg.training, "render_grid_cols", None),
                 render_offset_mode=str(getattr(env.cfg, "render_offset_mode", "grid")),
                 initialize=lambda: wrapped_env.reset()[0],
                 step=lambda obs: wrapped_env.step(policy(obs))[0],

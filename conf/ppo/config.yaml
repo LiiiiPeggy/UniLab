@@ -78,6 +78,9 @@ training:
   play_render_mode: auto
   play_env_num: 16
   render_spacing: 1.0
+  # Fixed grid column count for playback layout (rows = ceil(play_env_num/cols));
+  # null keeps the near-square sqrt layout.
+  render_grid_cols: null
   play_steps: 200
   # cam_distance=null → auto-fit to the env grid (see render_many.
   # compute_grid_camera_distance); an explicit value overrides the auto-fit.

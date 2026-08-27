@@ -340,7 +340,7 @@ def test_render_play_mode_uses_env_interactive_contract():
     )
 
     assert result is None
-    assert env.init_calls == [{"spacing": 2.5, "offset_mode": "grid"}]
+    assert env.init_calls == [{"spacing": 2.5, "offset_mode": "grid", "render_grid_cols": None}]
     assert env.render_calls == 3
     assert seen == [0, 1, 2]
 
@@ -496,6 +496,7 @@ def test_render_play_mode_uses_motrix_native_video_capture(
             "width": 1280,
             "height": 720,
             "camera_kwargs": {"cam_distance": 3.0},
+            "render_grid_cols": None,
         }
     ]
     assert env.capture_calls == 2

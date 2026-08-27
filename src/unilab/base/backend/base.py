@@ -361,6 +361,7 @@ class SimBackend(abc.ABC):
         num_steps: int | None,
         output_video: str | PathLike[str] | None = None,
         render_spacing: float | None = None,
+        render_grid_cols: int | None = None,
         render_offset_mode: str | None = None,
         headless: bool | None = None,
         record_video: bool | None = None,
@@ -381,11 +382,13 @@ class SimBackend(abc.ABC):
         width: int = 1280,
         height: int = 720,
         camera_kwargs: dict[str, Any] | None = None,
+        render_grid_cols: int | None = None,
     ) -> None:
         """Initialize a backend-native renderer.
 
         ``headless`` controls whether a native window is opened. ``capture``
         controls whether ``capture_video_frame`` is valid for the renderer.
+        ``render_grid_cols`` fixes the grid column count (rows = ceil(n/cols)).
         """
         raise NotImplementedError(f"{self.__class__.__name__} does not support native rendering")
 

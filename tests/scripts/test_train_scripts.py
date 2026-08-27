@@ -1067,8 +1067,8 @@ def test_run_motrix_rsl_play_loop_uses_render_spacing_and_offset_mode():
             self.init_renderer_calls = []
             self.render_calls = 0
 
-        def init_renderer(self, spacing=1.0, offset_mode="grid"):
-            self.init_renderer_calls.append((spacing, offset_mode))
+        def init_renderer(self, spacing=1.0, offset_mode="grid", **kwargs):
+            self.init_renderer_calls.append((spacing, offset_mode, kwargs.get("render_grid_cols")))
 
         def render(self):
             self.render_calls += 1
@@ -1078,7 +1078,7 @@ def test_run_motrix_rsl_play_loop_uses_render_spacing_and_offset_mode():
             self._renderer = FakeBackend()
             self.cfg = type("Cfg", (), {"render_spacing": 2.5, "render_offset_mode": "zero"})()
 
-        def init_play_renderer(self, render_spacing=None, render_offset_mode=None):
+        def init_play_renderer(self, render_spacing=None, render_offset_mode=None, **kwargs):
             offset_mode = "grid" if render_offset_mode is None else render_offset_mode
             if render_spacing is None:
                 self._renderer.init_renderer(offset_mode=offset_mode)
@@ -1131,11 +1131,12 @@ def test_run_motrix_rsl_play_loop_uses_render_spacing_and_offset_mode():
         render_spacing=2.5,
         render_offset_mode="zero",
         num_steps=3,
+        render_grid_cols=4,
     )
 
     assert wrapped_env.reset_calls == 1
     assert wrapped_env.step_calls == 3
-    assert wrapped_env.env._renderer.init_renderer_calls == [(2.5, "zero")]
+    assert wrapped_env.env._renderer.init_renderer_calls == [(2.5, "zero", 4)]
     assert wrapped_env.env._renderer.render_calls == 3
 
 

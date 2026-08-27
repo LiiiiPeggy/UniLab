@@ -28,6 +28,7 @@ def run_mujoco_playback(
     frame_state_getter: Callable[[], np.ndarray] | None,
     camera_kwargs: dict[str, Any] | None,
     extra_data_getter: Callable[[], np.ndarray | None] | None = None,
+    render_grid_cols: int | None = None,
 ) -> str | None:
     if not headless:
         raise NotImplementedError("MuJoCo play mode does not support interactive rendering here.")
@@ -80,6 +81,11 @@ def run_mujoco_playback(
         if render_spacing is not None
         else float(env_cfg_value(env, "render_spacing", 1.0))
     )
+    effective_cols = (
+        int(render_grid_cols)
+        if render_grid_cols is not None
+        else env_cfg_value(env, "render_grid_cols", None)
+    )
     with tempfile.TemporaryDirectory(prefix="unilab-playback-models-") as tmp_dir:
         model_files = resolve_render_play_model_files(
             env,
@@ -99,6 +105,7 @@ def run_mujoco_playback(
                 cam_elevation=cam_kw.get("cam_elevation", -20),
                 cam_azimuth=cam_kw.get("cam_azimuth", 90),
                 render_spacing=effective_spacing,
+                grid_cols=int(effective_cols) if effective_cols is not None else None,
                 marker_positions_list=marker_positions_list,
                 text_overlays_list=text_list,
             )
@@ -110,6 +117,7 @@ def run_mujoco_playback(
                 height=720,
                 camera_id=-1,
                 render_spacing=effective_spacing,
+                grid_cols=int(effective_cols) if effective_cols is not None else None,
                 marker_positions_list=marker_positions_list,
                 text_overlays_list=text_list,
                 **cam_kw,

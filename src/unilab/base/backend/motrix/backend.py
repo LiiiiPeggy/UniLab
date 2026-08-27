@@ -745,6 +745,7 @@ class MotrixBackend(SimBackend):
         num_steps: int | None,
         output_video: str | os.PathLike[str] | None = None,
         render_spacing: float | None = None,
+        render_grid_cols: int | None = None,
         render_offset_mode: str | None = None,
         headless: bool | None = None,
         record_video: bool | None = None,
@@ -766,6 +767,7 @@ class MotrixBackend(SimBackend):
                 num_steps=num_steps,
                 output_video=output_video,
                 render_spacing=render_spacing,
+                render_grid_cols=render_grid_cols,
                 render_offset_mode=render_offset_mode,
                 headless=should_run_headless,
                 record_video=should_record_video,
@@ -1215,6 +1217,7 @@ class MotrixBackend(SimBackend):
         width: int = 1280,
         height: int = 720,
         camera_kwargs: dict[str, Any] | None = None,
+        render_grid_cols: int | None = None,
     ) -> None:
         """Initialize a Motrix renderer, optionally enabling system-camera capture."""
         headless = bool(headless)
@@ -1229,6 +1232,7 @@ class MotrixBackend(SimBackend):
             self._num_envs,
             float(spacing),
             offset_mode=str(offset_mode),
+            grid_cols=int(render_grid_cols) if render_grid_cols is not None else None,
         )
         offsets_np = np.asarray(offsets, dtype=np.float64)
         self._render_offsets_np = offsets_np

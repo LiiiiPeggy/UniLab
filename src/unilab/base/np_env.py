@@ -317,6 +317,7 @@ class NpEnv(ABEnv):
         width: int = 1280,
         height: int = 720,
         camera_kwargs: dict[str, Any] | None = None,
+        render_grid_cols: int | None = None,
     ) -> None:
         """Initialize backend-native playback rendering when available."""
         if capture:
@@ -332,6 +333,11 @@ class NpEnv(ABEnv):
         spacing = (
             float(render_spacing) if render_spacing is not None else float(self._cfg.render_spacing)
         )
+        grid_cols = (
+            int(render_grid_cols)
+            if render_grid_cols is not None
+            else getattr(self._cfg, "render_grid_cols", None)
+        )
         offset_mode = (
             str(render_offset_mode)
             if render_offset_mode is not None
@@ -345,6 +351,7 @@ class NpEnv(ABEnv):
             width=int(width),
             height=int(height),
             camera_kwargs=camera_kwargs,
+            render_grid_cols=grid_cols,
         )
 
     def resolve_play_render_plan(
@@ -369,6 +376,7 @@ class NpEnv(ABEnv):
         num_steps: int | None,
         output_video: str | PathLike[str] | None = None,
         render_spacing: float | None = None,
+        render_grid_cols: int | None = None,
         render_offset_mode: str | None = None,
         headless: bool | None = None,
         record_video: bool | None = None,
@@ -384,6 +392,7 @@ class NpEnv(ABEnv):
             num_steps=num_steps,
             output_video=output_video,
             render_spacing=render_spacing,
+            render_grid_cols=render_grid_cols,
             render_offset_mode=render_offset_mode,
             headless=headless,
             record_video=record_video,

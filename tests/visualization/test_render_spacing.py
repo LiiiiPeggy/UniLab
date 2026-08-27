@@ -82,13 +82,78 @@ def test_render_spacing_camera_autofit_grid_in_frame():
     assert sy.min() >= 0 and sy.max() <= _HEIGHT, f"y out of frame: {sy.min():.0f}..{sy.max():.0f}"
 
 
+def test_grid_offsets_fixed_cols_two_by_four():
+    """grid_cols=4 with 8 envs gives an exact row-major 2x4 layout."""
+    offsets = get_grid_offsets(8, spacing=6.0, grid_cols=4)
+    rows = sorted(set(offsets[:, 0]))
+    cols = sorted(set(offsets[:, 1]))
+    assert rows == pytest.approx([0.0, 6.0])
+    assert cols == pytest.approx([0.0, 6.0, 12.0, 18.0])
+    # Row-major: first row holds envs 0..3, second row envs 4..7.
+    assert np.allclose(offsets[:4, 0], 0.0) and np.allclose(offsets[4:, 0], 6.0)
+
+
+def test_grid_offsets_default_stays_near_square():
+    """No grid_cols → legacy near-square sqrt behaviour unchanged."""
+    # 8 envs: rows=ceil(sqrt(8))=3, cols=ceil(8/3)=3.
+    offsets = get_grid_offsets(8, spacing=1.0)
+    assert len(set(offsets[:, 0])) == 3
+    assert len(set(offsets[:, 1])) == 3
+
+
+def test_render_spacing_camera_autofit_two_by_four_in_frame():
+    """2x4 @ 6 m spacing: robots, trails, markers all inside the viewport."""
+    offsets = get_grid_offsets(8, spacing=6.0, grid_cols=4)
+    cam = _make_cam(offsets)
+    pts = np.vstack(
+        [
+            _grid_corners(offsets),
+            # mid-height points between cells (marker/trail envelope)
+            [
+                [offsets[i, 0] + dx, offsets[i, 1] + dy, dz]
+                for i in (0, 7)
+                for dx, dy, dz in ((-0.5, -0.5, 0.2), (0.5, 0.5, 1.15))
+            ],
+        ]
+    )
+    screen = _project_points(cam, pts, _WIDTH, _HEIGHT)
+    assert all(s is not None for s in screen), "some points behind camera"
+    sx = np.asarray([s[0] for s in screen])
+    sy = np.asarray([s[1] for s in screen])
+    assert sx.min() >= 0 and sx.max() <= _WIDTH, f"x out of frame: {sx.min():.0f}..{sx.max():.0f}"
+    assert sy.min() >= 0 and sy.max() <= _HEIGHT, f"y out of frame: {sy.min():.0f}..{sy.max():.0f}"
+
+
 def test_render_spacing_camera_autofit_scales_with_spacing():
     """Wider spacing → farther auto-fit distance (monotonic in span)."""
     d_close = compute_grid_camera_distance(get_grid_offsets(4, spacing=1.0))
     d_far = compute_grid_camera_distance(get_grid_offsets(4, spacing=_SPACING))
     assert d_far > d_close
-    # 4-env 12 m grid needs a clearly larger distance than the default 2.0.
+    # 4-env 12 m grid spans ~25 m horizontally; the fitted distance must be
+    # well above any close-up default while staying bounded by the geometry
+    # (no runaway conservative blow-up like the old diagonal heuristic).
     assert d_far > 10.0
+    assert d_far < 60.0
+
+
+def test_render_spacing_camera_autofit_tighter_than_diagonal_heuristic():
+    """Projected-bounds fit never lands farther than the old XY-diagonal formula."""
+    import math
+
+    offsets = get_grid_offsets(8, spacing=6.0, grid_cols=4)
+    span_x = float(np.ptp(offsets[:, 0]))
+    span_y = float(np.ptp(offsets[:, 1]))
+    diag_half = 0.5 * float(np.hypot(span_x, span_y))
+    old_style = diag_half / math.tan(math.radians(_FOVY_DEG) / 2.0)
+    fitted = compute_grid_camera_distance(offsets)
+    assert fitted < old_style, (
+        f"fitted distance {fitted:.1f} m must stay within the diagonal "
+        f"heuristic {old_style:.1f} m"
+    )
+    # Single robot: no grid spread at all, so the fit hugs the robot size
+    # instead of growing with any cell-count term.
+    single = compute_grid_camera_distance(get_grid_offsets(1, spacing=1.0))
+    assert single < 4.0
 
 
 def test_render_spacing_camera_manual_override_wins():

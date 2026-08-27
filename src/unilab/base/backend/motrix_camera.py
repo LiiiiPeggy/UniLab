@@ -24,12 +24,20 @@ class MotrixCameraView:
     tracking: MotrixTrackingCamera | None = None
 
 
-def render_offsets(num_envs: int, spacing: float, offset_mode: str = "grid") -> list[list[float]]:
+def render_offsets(
+    num_envs: int,
+    spacing: float,
+    offset_mode: str = "grid",
+    grid_cols: int | None = None,
+) -> list[list[float]]:
     if offset_mode == "zero":
         return [[0.0, 0.0, 0.0] for _ in range(num_envs)]
     if offset_mode != "grid":
         raise ValueError(f"Unsupported Motrix render_offset_mode: {offset_mode!r}")
-    cols = int(np.ceil(np.sqrt(num_envs)))
+    if grid_cols is not None and int(grid_cols) > 0:
+        cols = int(grid_cols)
+    else:
+        cols = int(np.ceil(np.sqrt(max(num_envs, 1))))
     offsets = []
     for i in range(num_envs):
         row = i // cols

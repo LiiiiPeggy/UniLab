@@ -27,6 +27,7 @@ def run_motrix_playback(
     record_video: bool,
     camera_kwargs: dict[str, Any] | None,
     extra_data_getter: Callable[[], np.ndarray | None] | None = None,
+    render_grid_cols: int | None = None,
 ) -> str | None:
     del extra_data_getter
     if record_video and not headless:
@@ -43,6 +44,11 @@ def run_motrix_playback(
             if render_spacing is not None
             else float(env_cfg_value(env, "render_spacing", 1.0))
         )
+        effective_cols = (
+            int(render_grid_cols)
+            if render_grid_cols is not None
+            else env_cfg_value(env, "render_grid_cols", None)
+        )
         backend.init_renderer(
             spacing=effective_spacing,
             offset_mode=str(render_offset_mode) if render_offset_mode is not None else "grid",
@@ -51,6 +57,7 @@ def run_motrix_playback(
             width=1280,
             height=720,
             camera_kwargs=dict(camera_kwargs or {}),
+            render_grid_cols=int(effective_cols) if effective_cols is not None else None,
         )
 
         obs = initialize()
@@ -77,9 +84,17 @@ def run_motrix_playback(
         if render_spacing is not None
         else float(env_cfg_value(env, "render_spacing", 1.0))
     )
+    effective_cols_interactive = (
+        int(render_grid_cols)
+        if render_grid_cols is not None
+        else env_cfg_value(env, "render_grid_cols", None)
+    )
     backend.init_renderer(
         spacing=effective_spacing,
         offset_mode=str(render_offset_mode) if render_offset_mode is not None else "grid",
+        render_grid_cols=(
+            int(effective_cols_interactive) if effective_cols_interactive is not None else None
+        ),
     )
     obs = initialize()
     last_render_time = time.perf_counter()
