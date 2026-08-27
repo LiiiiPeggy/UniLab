@@ -2,6 +2,14 @@
 training:
   task_name: RangerBoxReach
   sim_backend: mujoco
+  # Playback defaults: 2x4 grid (8 envs, 4 columns), cells spaced 6 m.
+  # cam_azimuth=0 views ACROSS the columns (camera on the −x side): all four
+  # columns line up horizontally with uniform robot size; azimuth=90 looks
+  # down the long grid axis (near column huge/clipped, far column tiny).
+  play_env_num: 8
+  render_grid_cols: 4
+  render_spacing: 6.0
+  cam_azimuth: 0.0
 
 algo:
   num_envs: 256
@@ -101,13 +109,19 @@ env:
     controller_mode: resolved_rate
   goal_ee:
     # LOCAL goals (within the arm's reliable capture radius) vs EXTENDED goals
-    # (require base navigation).  Sampled by true radial distance from the EE.
-    # Radius ranges measured by benchmark_ranger_box_ik_capture_radius.py:
+    # (require base navigation).  LOCAL uses true 3D radial distance from the
+    # EE; radius ranges measured by benchmark_ranger_box_ik_capture_radius.py:
     # the arm reliably reaches (once10 > 0.9) only within ~0.15 m, so the
-    # LOCAL range is [0.10, 0.15] and the capture region is 0.13/0.18.
+    # LOCAL range is [0.10, 0.15] and the capture region is 0.15/0.20.
+    # EXTENDED is PLANAR: theta ~ U(-pi,pi), r_xy ~ U(extended_xy_radius_range)
+    # and dz ~ U(extended_z_range) relative to the EE.  The SE(2) base cannot
+    # change height, and the 3D radial sampler let |dz| exceed capture_outer on
+    # ~54% of EXTENDED goals (extended_geometry_iter{150,199}.json: hold10
+    # collapses 1.00 -> 0.18 across |dz| bins), so dz is bounded to +/-0.10.
     local_fraction: 0.30
     local_radius_range: [0.10, 0.15]
-    extended_radius_range: [0.30, 0.70]
+    extended_xy_radius_range: [0.30, 0.70]
+    extended_z_range: [-0.10, 0.10]
     # Arm-capture region (EE-to-goal distance) for the arm-engagement gate.
     # capture_inner = the measured reliable capture radius (0.15 m); LOCAL
     # goals sit inside it (fully engaged); the blend runs to capture_outer.

@@ -5,6 +5,7 @@ Dataclass definitions, reward functions, DR provider, and env class.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -287,17 +288,19 @@ def build_ranger_box_position_gains(cc: RangerBoxControlConfig) -> dict[str, np.
 class RangerBoxEEGoalConfig(EEGoalConfig):
     """RangerBox goal sampling: LOCAL (arm capture region) + EXTENDED (base nav).
 
-    Goals are sampled by TRUE radial distance from the current EE
-    (direction = random unit vector, then scale by a radius) — NOT an
-    axis-aligned Cartesian box, which would let |delta| exceed the radius.
-
-    - LOCAL goals (``local_fraction``): EE-to-goal distance in
-      ``local_radius_range``.  These sit inside the arm's reliable capture
+    - LOCAL goals (``local_fraction``): sampled by TRUE radial distance from
+      the current EE (random unit vector scaled by a radius in
+      ``local_radius_range``).  These sit inside the arm's reliable capture
       radius and are IK-feasibility filtered at reset.
-    - EXTENDED goals: EE-to-goal distance in ``extended_radius_range``.  These
-      require the base to navigate the goal into the arm's capture region
-      (they are NOT IK-feasibility filtered — the IK is not expected to reach
-      them alone).
+    - EXTENDED goals: PLANAR sampling in the armbase frame —
+      ``theta ~ U(-pi, pi)``, ``r_xy ~ U(extended_xy_radius_range)`` and
+      ``dz ~ U(extended_z_range)`` relative to the current EE.  The SE(2)-locked
+      base can only change x/y/yaw, so a true-3D radial sample lets |delta_z|
+      exceed ``capture_outer`` (~54% of goals in Run-4A evals), leaving the
+      capture region unreachable by construction (geometry benchmark:
+      extended_geometry_iter{150,199}.json — hold10 collapses 1.00 → 0.18
+      across |dz| bins while the |dz|<0.20 subset reaches 0.89).  Bounding dz
+      keeps every EXTENDED goal vertically inside base+arm reach.
 
     ``capture_inner`` / ``capture_outer`` define the arm-capture region in
     EE-to-goal distance, used by the arm-engagement gate in apply_action:
@@ -311,7 +314,10 @@ class RangerBoxEEGoalConfig(EEGoalConfig):
     # LOCAL goals sit inside capture_inner (fully engaged); capture_outer is
     # the blend boundary toward the base-navigation regime.
     local_radius_range: tuple[float, float] = (0.10, 0.15)
-    extended_radius_range: tuple[float, float] = (0.30, 0.70)
+    # EXTENDED horizontal radius (armbase frame, EE-relative) and vertical
+    # offset band; |dz| <= 0.10 < capture_outer keeps base-only closure possible.
+    extended_xy_radius_range: tuple[float, float] = (0.30, 0.70)
+    extended_z_range: tuple[float, float] = (-0.10, 0.10)
     capture_inner: float = 0.15
     capture_outer: float = 0.20
 
@@ -410,16 +416,16 @@ def _reward_success_once_10(ctx: _RewardContext) -> np.ndarray:
     Previously this fired on every in-threshold step, so a policy could cross
     the 10 cm boundary repeatedly and farm the bonus without ever holding.
     """
-    return (
-        ctx.info.get("event_success_once_10", np.zeros(ctx.num_envs, dtype=bool))
-    ).astype(np.float64)
+    return (ctx.info.get("event_success_once_10", np.zeros(ctx.num_envs, dtype=bool))).astype(
+        np.float64
+    )
 
 
 def _reward_success_once_05(ctx: _RewardContext) -> np.ndarray:
     """First-entry bonus for 5 cm (see _reward_success_once_10)."""
-    return (
-        ctx.info.get("event_success_once_05", np.zeros(ctx.num_envs, dtype=bool))
-    ).astype(np.float64)
+    return (ctx.info.get("event_success_once_05", np.zeros(ctx.num_envs, dtype=bool))).astype(
+        np.float64
+    )
 
 
 def _reward_success_hold_10cm(ctx: _RewardContext) -> np.ndarray:
@@ -428,9 +434,9 @@ def _reward_success_hold_10cm(ctx: _RewardContext) -> np.ndarray:
     Aligns reward with the desired terminal state: holding 10 cm for 0.5 s is
     the best outcome and terminates the episode on that same step.
     """
-    return (
-        ctx.info.get("event_success_hold", np.zeros(ctx.num_envs, dtype=bool))
-    ).astype(np.float64)
+    return (ctx.info.get("event_success_hold", np.zeros(ctx.num_envs, dtype=bool))).astype(
+        np.float64
+    )
 
 
 def _reward_base_vel_xy(ctx: _RewardContext) -> np.ndarray:
@@ -632,9 +638,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         if ready_pose is not None:
             arm_q = np.asarray(ready_pose, dtype=np.float64)
             if arm_q.shape != (6,):
-                raise ValueError(
-                    f"env.init_arm_pose must have shape (6,), got {arm_q.shape}"
-                )
+                raise ValueError(f"env.init_arm_pose must have shape (6,), got {arm_q.shape}")
             arm_qpos_idx = (
                 self._backend.get_joint_dof_pos_indices(self._cfg.asset.arm_joint_names) + 1
             )
@@ -777,11 +781,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # (arm_weight=0) the residual is zero and only validated IK + ready-hold
         # act, so exploration cannot fight the stable IK during base approach.
         # (Run-3 LOCAL hold regression 1.0 → 0.26 tracked the residual growing.)
-        arm_residual = (
-            arm_action
-            * self._cfg.control_config.arm_action_scale
-            * arm_weight[:, None]
-        )
+        arm_residual = arm_action * self._cfg.control_config.arm_action_scale * arm_weight[:, None]
         mode = getattr(ik, "controller_mode", "resolved_rate_damped")
 
         if mode == "integrated":
@@ -826,9 +826,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             )
             q_target = np.clip(q_target, self._arm_soft_lower, self._arm_soft_upper)
             self._ik_target[:] = q_target  # mirror for diagnostics / tests
-            arm_ctrl = np.clip(
-                q_target + arm_residual, self._arm_soft_lower, self._arm_soft_upper
-            )
+            arm_ctrl = np.clip(q_target + arm_residual, self._arm_soft_lower, self._arm_soft_upper)
         # AG95 is not part of the reaching action space: hold a fixed opening.
         grip_ctrl = np.full(
             (actions.shape[0], 1),
@@ -1235,12 +1233,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # it.  NaN marks slots not yet filled so the renderer skips them.
         self._record_traj = False
         self._traj_len = 60
-        self._traj_base = np.full(
-            (self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64
-        )
-        self._traj_ee = np.full(
-            (self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64
-        )
+        self._traj_base = np.full((self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64)
+        self._traj_ee = np.full((self._num_envs, self._traj_len, 3), np.nan, dtype=np.float64)
 
     @property
     def curr_ee_goal_world(self) -> np.ndarray:
@@ -1288,15 +1282,19 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         return out
 
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
-        """Sample LOCAL / EXTENDED EE goals by TRUE radial distance (Task 4).
+        """Sample LOCAL / EXTENDED EE goals around the current EE.
 
-        goal = current EE + r * u,  u = random unit vector, r ~ radius range.
-
-        - LOCAL (``local_fraction``): r in ``local_radius_range`` — inside the
-          arm's reliable capture radius; fully IK-feasibility filtered.
-        - EXTENDED: r in ``extended_radius_range`` — requires base navigation;
-          only physical sanity is checked (floor / chassis), NOT IK feasibility
-          (the base brings the goal into the capture region).
+        - LOCAL (``local_fraction``): TRUE radial sample —
+          ``goal = EE + r * u``, ``u`` a random unit vector, ``r`` in
+          ``local_radius_range`` — inside the arm's reliable capture radius;
+          fully IK-feasibility filtered.
+        - EXTENDED: PLANAR sample — ``theta ~ U(-pi, pi)``,
+          ``r_xy ~ U(extended_xy_radius_range)``, ``dz ~ U(extended_z_range)``
+          in the armbase frame.  The SE(2)-locked base can only change x/y/yaw,
+          so the vertical offset is bounded to keep every goal reachable via
+          base navigation + the arm's vertical workspace; only physical sanity
+          is checked (floor / chassis), NOT IK feasibility (the base brings the
+          goal into the capture region).
 
         Rejection-sampled; fallback after all attempts is a small forward-down
         reach (guaranteed locally reachable).
@@ -1319,13 +1317,29 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             r = rng.uniform(r_lo, r_hi, size=size)
             return v * r[:, None]
 
+        def _sample_planar(
+            r_lo: float, r_hi: float, z_lo: float, z_hi: float, size: int
+        ) -> np.ndarray:
+            theta = rng.uniform(-math.pi, math.pi, size=size)
+            r = rng.uniform(r_lo, r_hi, size=size)
+            out = np.zeros((size, 3), dtype=np.float64)
+            out[:, 0] = np.cos(theta) * r
+            out[:, 1] = np.sin(theta) * r
+            out[:, 2] = rng.uniform(z_lo, z_hi, size=size)
+            return out
+
+        def _sample_ext(size: int) -> np.ndarray:
+            return _sample_planar(
+                *goal_cfg.extended_xy_radius_range, *goal_cfg.extended_z_range, size
+            )
+
         delta = np.zeros((n, 3), dtype=np.float64)
         n_loc = int(is_local.sum())
         n_ext = n - n_loc
         if n_loc > 0:
             delta[is_local] = _sample_radial(*goal_cfg.local_radius_range, n_loc)
         if n_ext > 0:
-            delta[~is_local] = _sample_radial(*goal_cfg.extended_radius_range, n_ext)
+            delta[~is_local] = _sample_ext(n_ext)
 
         goal_local = ee_local + delta
         goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goal_local)
@@ -1343,7 +1357,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             if n_bl > 0:
                 new_delta[bad_local] = _sample_radial(*goal_cfg.local_radius_range, n_bl)
             if n_be > 0:
-                new_delta[~bad_local] = _sample_radial(*goal_cfg.extended_radius_range, n_be)
+                new_delta[~bad_local] = _sample_ext(n_be)
             delta[bad] = new_delta
             goal_local[bad] = ee_local[bad] + new_delta
             goals_world[bad] = armbase_pos[bad] + np_quat_apply_batched(
@@ -1414,7 +1428,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         )
         jacp_b = np.matmul(np.swapaxes(ref_rot, 1, 2), jacp_w[env_ids])  # (n,3,6)
         eye3 = np.eye(3, dtype=jacp_b.dtype)[None, :, :]
-        lhs = np.matmul(jacp_b, np.swapaxes(jacp_b, 1, 2)) + eye3 * (self._cfg.ik.damping ** 2)
+        lhs = np.matmul(jacp_b, np.swapaxes(jacp_b, 1, 2)) + eye3 * (self._cfg.ik.damping**2)
         rhs = pos_err[:, :, None]
         dq = np.matmul(np.swapaxes(jacp_b, 1, 2), np.linalg.solve(lhs, rhs))[:, :, 0]
 

@@ -248,9 +248,7 @@ class TestRangerBoxReachEnv:
         for _ in range(5):
             env4.step(np.zeros((4, 9)))
         ee_local, _ = env4.get_ee_local_pose()
-        ee_world = env4.armbase_pos_world + np_quat_apply_batched(
-            env4.armbase_quat_world, ee_local
-        )
+        ee_world = env4.armbase_pos_world + np_quat_apply_batched(env4.armbase_quat_world, ee_local)
         assert np.allclose(env4._traj_ee[:, -1], ee_world, atol=1e-6)
         base_world = env4._backend.get_base_pos()
         assert np.allclose(env4._traj_base[:, -1], base_world, atol=1e-6)
@@ -261,16 +259,20 @@ class TestRangerBoxReachEnv:
         cfg = RangerBoxEEGoalConfig()
         assert cfg.local_fraction == 0.30
         assert cfg.local_radius_range == (0.10, 0.15)
-        assert cfg.extended_radius_range == (0.30, 0.70)
+        assert cfg.extended_xy_radius_range == (0.30, 0.70)
+        assert cfg.extended_z_range == (-0.10, 0.10)
+        # |dz| bound keeps EXTENDED goals vertically inside base+arm reach.
+        assert abs(cfg.extended_z_range[1] - cfg.extended_z_range[0]) / 2.0 < cfg.capture_outer
         assert cfg.capture_inner < cfg.capture_outer
         # Old spherical reachable fields are gone from the ranger config.
         assert not hasattr(cfg, "reachable_fraction")
+        assert not hasattr(cfg, "extended_radius_range")
 
     def test_reset_goals_local_extended_radial(self, env4):
         from unilab.envs.common.rotation import np_quat_apply_batched
 
         # With only 4 envs, a 30 % local-fraction reset can (by chance) draw all
-        # extended (~24 %); resample until mixed so the radial invariants below
+        # extended (~24 %); resample until mixed so the invariants below
         # are exercised for BOTH goal types.
         for _ in range(40):
             env4.reset(np.arange(4))
@@ -278,19 +280,24 @@ class TestRangerBoxReachEnv:
             if 0.0 < loc.mean() < 1.0:
                 break
         ee_local, _ = env4.get_ee_local_pose()
-        ee_world = env4.armbase_pos_world + np_quat_apply_batched(
-            env4.armbase_quat_world, ee_local
-        )
+        ee_world = env4.armbase_pos_world + np_quat_apply_batched(env4.armbase_quat_world, ee_local)
         d = np.linalg.norm(ee_world - env4.world_ee_goal, axis=1)
         assert 0.0 < loc.mean() < 1.0  # mixed local/extended
         cfg = env4._cfg.goal_ee
+        # LOCAL: true 3D radial — EE-to-goal distance == sampled radius.
         assert np.all(d[loc] >= cfg.local_radius_range[0] - 1e-3)
         assert np.all(d[loc] <= cfg.local_radius_range[1] + 1e-3)
-        assert np.all(d[~loc] >= cfg.extended_radius_range[0] - 1e-3)
-        assert np.all(d[~loc] <= cfg.extended_radius_range[1] + 1e-3)
-        # Radial (goal-EE distance == |goal_local - ee_local|), not boxed.
-        gl = env4._world_goal_to_armbase(env4.world_ee_goal, env4.armbase_pos_world, env4.armbase_quat_world)
-        assert np.allclose(np.linalg.norm(gl - ee_local, axis=1), d, atol=1e-3)
+        gl = env4._world_goal_to_armbase(
+            env4.world_ee_goal, env4.armbase_pos_world, env4.armbase_quat_world
+        )
+        assert np.allclose(np.linalg.norm(gl - ee_local, axis=1)[loc], d[loc], atol=1e-3)
+        # EXTENDED: planar — r_xy in range and |dz| bounded (base-only closure).
+        r_xy = np.linalg.norm(gl[~loc, :2] - ee_local[~loc, :2], axis=1)
+        dz = gl[~loc, 2] - ee_local[~loc, 2]
+        assert np.all(r_xy >= cfg.extended_xy_radius_range[0] - 1e-3)
+        assert np.all(r_xy <= cfg.extended_xy_radius_range[1] + 1e-3)
+        assert np.all(dz >= cfg.extended_z_range[0] - 1e-3)
+        assert np.all(dz <= cfg.extended_z_range[1] + 1e-3)
 
     def test_capture_gate_arm_weight_by_distance(self, env4):
         # The arm-engagement gate ramps arm_weight on the EE-to-goal distance:
@@ -357,9 +364,7 @@ class TestRangerBoxReachEnv:
         base_start = env4._backend.get_base_pos()[:, :2].copy()
         for _ in range(30):
             env4.step(act)
-        base_disp = np.linalg.norm(
-            env4._backend.get_base_pos()[:, :2] - base_start, axis=1
-        )
+        base_disp = np.linalg.norm(env4._backend.get_base_pos()[:, :2] - base_start, axis=1)
         # LOCAL goals sit inside capture_inner → arm_weight≈1 → base_weight≈0
         assert np.max(base_disp[loc]) < 0.05, f"local base moved {base_disp[loc].max():.3f}m"
 
