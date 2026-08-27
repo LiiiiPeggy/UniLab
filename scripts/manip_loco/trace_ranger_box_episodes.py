@@ -5,6 +5,7 @@ each env by goal type / outcome, and prints a per-step timeline (d, aw, base
 displacement, arm motion) for one success EXT, one fail EXT, one LOCAL episode
 — a numeric proxy for video inspection (image reading unavailable here).
 """
+
 from __future__ import annotations
 
 import sys
@@ -28,7 +29,11 @@ from unilab.training import BackendAdapter, create_env, ensure_registries  # noq
 from unilab.training.rsl_rl import RslRlVecEnvWrapper, normalize_ppo_train_cfg  # noqa: E402
 from unilab.training.sim2sim import policy_load_dim_guard  # noqa: E402
 
-RUN = sys.argv[1] if len(sys.argv) > 1 else "logs/rsl_rl_ppo/RangerBoxReach/2026-08-27_16-50-34_mujoco"
+RUN = (
+    sys.argv[1]
+    if len(sys.argv) > 1
+    else "logs/rsl_rl_ppo/RangerBoxReach/2026-08-27_16-50-34_mujoco"
+)
 ITER = int(sys.argv[2]) if len(sys.argv) > 2 else 299
 N_ENVS = int(sys.argv[3]) if len(sys.argv) > 3 else 12
 STEPS = int(sys.argv[4]) if len(sys.argv) > 4 else 300
@@ -51,7 +56,9 @@ with initialize_config_dir(version_base="1.3", config_dir=str(ROOT_DIR / "conf" 
             "env.domain_rand.randomize_dof_armature=false",
         ],
     )
-env_cfg_override = BackendAdapter(cfg, root_dir="/home/ubuntu/locomani/UniLab").build_task_env_cfg_override()
+env_cfg_override = BackendAdapter(
+    cfg, root_dir="/home/ubuntu/locomani/UniLab"
+).build_task_env_cfg_override()
 env = create_env(cfg, num_envs=N_ENVS, env_cfg_override=env_cfg_override)
 env.set_autoreset(False)
 capture_outer = float(getattr(env._cfg.goal_ee, "capture_outer", 0.20))
@@ -126,22 +133,28 @@ for t in range(STEPS):
 
 print("\nepisode summary:")
 for i in range(N_ENVS):
-    print(f"  env{i}: {'LOCAL' if is_local[i] else 'EXT '} held={held[i]} "
-          f"entered={entered[i]} done={dones[i]} reason={reason[i] or 'running'}")
+    print(
+        f"  env{i}: {'LOCAL' if is_local[i] else 'EXT '} held={held[i]} "
+        f"entered={entered[i]} done={dones[i]} reason={reason[i] or 'running'}"
+    )
 
 
 def show(ep_idx: int, label: str) -> None:
     g0 = np.linalg.norm(
         ee_world() if False else env.world_ee_goal[ep_idx] - (env.armbase_pos_world[ep_idx])
     )
-    print(f"\n--- {label} (env{ep_idx}, {'LOCAL' if is_local[ep_idx] else 'EXTENDED'}, "
-          f"g0={g0:.2f}m) held={held[ep_idx]} ---")
+    print(
+        f"\n--- {label} (env{ep_idx}, {'LOCAL' if is_local[ep_idx] else 'EXTENDED'}, "
+        f"g0={g0:.2f}m) held={held[ep_idx]} ---"
+    )
     print(f"{'step':>5} {'d':>6} {'aw':>5} {'base_disp':>8} {'arm_move':>8}")
     prev = -10
     for t in range(len(trace_d[ep_idx])):
         if t - prev >= 10 or t == len(trace_d[ep_idx]) - 1:
-            print(f"{t:>5} {trace_d[ep_idx][t]:6.3f} {trace_aw[ep_idx][t]:5.2f} "
-                  f"{trace_base[ep_idx][t]:8.3f} {trace_arm[ep_idx][t]:8.3f}")
+            print(
+                f"{t:>5} {trace_d[ep_idx][t]:6.3f} {trace_aw[ep_idx][t]:5.2f} "
+                f"{trace_base[ep_idx][t]:8.3f} {trace_arm[ep_idx][t]:8.3f}"
+            )
             prev = t
 
 

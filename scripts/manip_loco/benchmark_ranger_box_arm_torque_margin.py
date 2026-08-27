@@ -95,8 +95,10 @@ def run_scene(env, action) -> dict:
 def _fmt(scene: dict, label: str, rng_lim: str) -> None:
     m = scene["mean_abs"]
     s = scene["sat_frac"]
-    print(f"  {label:<12} sat_frac[j3..j6] = {s[2]:5.2f} {s[3]:5.2f} {s[4]:5.2f} {s[5]:5.2f}"
-          f"   | mean torque j1..j6 = {m.round(1).tolist()}")
+    print(
+        f"  {label:<12} sat_frac[j3..j6] = {s[2]:5.2f} {s[3]:5.2f} {s[4]:5.2f} {s[5]:5.2f}"
+        f"   | mean torque j1..j6 = {m.round(1).tolist()}"
+    )
     print(f"               limit        = {rng_lim}")
 
 
@@ -110,8 +112,10 @@ def main() -> None:
 
     print("=" * 88)
     print("CR10 arm torque margin (diagnostic; force limits NOT changed)")
-    print(f"  {N_ENVS} envs, {STEPS} steps (steady-state over last {STEPS - WARMUP}), "
-          f"limits j1..j6 = {TORQUE_LIMITS.tolist()}")
+    print(
+        f"  {N_ENVS} envs, {STEPS} steps (steady-state over last {STEPS - WARMUP}), "
+        f"limits j1..j6 = {TORQUE_LIMITS.tolist()}"
+    )
     print("=" * 88)
     _fmt(run_scene(env, zero), "static q_ready", "15/50/50/25/25/25")
     _fmt(run_scene(env, base_x), "base 0.2m/s x", "15/50/50/25/25/25")
@@ -131,8 +135,10 @@ def main() -> None:
     f = np.asarray(forces)[WARMUP:]
     mean_abs = np.mean(np.abs(f), axis=(0, 1))
     sat_frac = np.mean(np.abs(f) / TORQUE_LIMITS[None, None, :] > 0.95, axis=(0, 1))
-    print(f"  {'IK reaching':<12} sat_frac[j3..j6] = {sat_frac[2]:5.2f} {sat_frac[3]:5.2f} "
-          f"{sat_frac[4]:5.2f} {sat_frac[5]:5.2f}   | mean torque = {mean_abs.round(1).tolist()}")
+    print(
+        f"  {'IK reaching':<12} sat_frac[j3..j6] = {sat_frac[2]:5.2f} {sat_frac[3]:5.2f} "
+        f"{sat_frac[4]:5.2f} {sat_frac[5]:5.2f}   | mean torque = {mean_abs.round(1).tolist()}"
+    )
     print("               limit        = 15/50/50/25/25/25")
     env.close()
     env2.close()

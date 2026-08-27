@@ -62,9 +62,14 @@ LINK_R = np.array([0.05, 0.09, 0.08, 0.05, 0.05, 0.06], dtype=np.float64)
 def build_env(num_envs: int):
     ensure_registries()
     with initialize_config_dir(version_base="1.3", config_dir=CONF_DIR):
-        cfg = compose(config_name="config", overrides=["task=ranger_box_reach/mujoco",
-                                                       f"algo.num_envs={num_envs}",
-                                                       "algo.max_iterations=10"])
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "task=ranger_box_reach/mujoco",
+                f"algo.num_envs={num_envs}",
+                "algo.max_iterations=10",
+            ],
+        )
     env_cfg_override = BackendAdapter(cfg, root_dir=ROOT_DIR).build_task_env_cfg_override()
     env = create_env(cfg, num_envs=num_envs, env_cfg_override=env_cfg_override)
     env.set_autoreset(False)
@@ -123,8 +128,9 @@ def sample_batch(env, rng):
     base_clear = sd.min(axis=1)
 
     # Link self-collision (non-adjacent pairs, sphere approx on body origins).
-    link_pos = np.stack([env._backend.get_sensor_data(name) for name in env._cfg.sensor.link_pos],
-                        axis=1)  # (N,5,3) for Link2..6
+    link_pos = np.stack(
+        [env._backend.get_sensor_data(name) for name in env._cfg.sensor.link_pos], axis=1
+    )  # (N,5,3) for Link2..6
     self_col = np.zeros(N_BATCH, dtype=bool)
     for i in range(5):
         for j in range(i + 2, 5):  # skip adjacent (i+1)
@@ -151,9 +157,7 @@ def settle_drift(env, q_candidate):
         env._ik_target[:] = q_candidate
         q_hist[i] = env.get_arm_dof_pos()[0]
         ee_local, _ = env.get_ee_local_pose()
-        ee_world = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         box_centre_w = env.armbase_pos_world + np_quat_apply_batched(
             env.armbase_quat_world, np.broadcast_to(_BOX_CENTRE_OFFSET, (1, 3))
         )
@@ -203,11 +207,12 @@ def main() -> None:
     score = cond / 20.0 + np.abs(dist - 0.45) / 0.15 + (0.3 - np.minimum(margin, 0.3)) / 0.3
     order = np.argsort(score)[:20]
     print("\n=== top 20 candidates (by score) ===")
-    print(f"{'#':>2} {'cond':>6} {'dist':>5} {'margin':>6} {'clear':>5}  "
-          f"{'q1..q6':>40}  EE")
+    print(f"{'#':>2} {'cond':>6} {'dist':>5} {'margin':>6} {'clear':>5}  {'q1..q6':>40}  EE")
     for rank, i in enumerate(order):
-        print(f"{rank + 1:2d} {cond[i]:6.1f} {dist[i]:5.2f} {margin[i]:6.2f} {clear[i]:5.2f}  "
-              f"[{', '.join(f'{v:.3f}' for v in q[i])}]")
+        print(
+            f"{rank + 1:2d} {cond[i]:6.1f} {dist[i]:5.2f} {margin[i]:6.2f} {clear[i]:5.2f}  "
+            f"[{', '.join(f'{v:.3f}' for v in q[i])}]"
+        )
 
     # Physics settle for the top 10 to find gravity-stable folded poses.
     print("\n=== physics settle drift (top 10, 150 steps hold) ===")
@@ -218,21 +223,29 @@ def main() -> None:
         drift, min_clear = settle_drift(env, q[i])
         mx = float(np.max(drift))
         coll = " COLLIDE" if min_clear < 0.0 else ""
-        print(f"{rank + 1:2d} {cond[i]:6.1f} [{', '.join(f'{v:.3f}' for v in drift)}]  "
-              f"{mx:6.3f} {min_clear:8.3f}{coll}")
+        print(
+            f"{rank + 1:2d} {cond[i]:6.1f} [{', '.join(f'{v:.3f}' for v in drift)}]  "
+            f"{mx:6.3f} {min_clear:8.3f}{coll}"
+        )
         if (min_clear >= 0.0) and (best is None or mx < best[0]):
             best = (mx, rank, i)
     env.close()
 
     if best is not None:
         _, rank, i = best
-        print(f"\nmost gravity-stable (collision-free): candidate #{rank + 1}  max drift {best[0]:.3f} rad")
+        print(
+            f"\nmost gravity-stable (collision-free): candidate #{rank + 1}  max drift {best[0]:.3f} rad"
+        )
         print("  q = " + str([round(float(v), 4) for v in q[i]]))
-        print("  cond = %.1f  dist = %.2f  margin = %.2f  base_clear = %.2f"
-              % (cond[i], dist[i], margin[i], clear[i]))
+        print(
+            "  cond = %.1f  dist = %.2f  margin = %.2f  base_clear = %.2f"
+            % (cond[i], dist[i], margin[i], clear[i])
+        )
     else:
-        print("\nno collision-free stable candidate — folded poses sag toward the "
-              "extended equilibrium under the current physics.")
+        print(
+            "\nno collision-free stable candidate — folded poses sag toward the "
+            "extended equilibrium under the current physics."
+        )
     print("\n=== done ===")
 
 

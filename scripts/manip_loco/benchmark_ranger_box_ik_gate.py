@@ -153,9 +153,7 @@ def main() -> None:
                 break
 
         ee_local, _ = env.get_ee_local_pose()
-        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         d_final = np.linalg.norm(ee_world_f - env.world_ee_goal, axis=1)
 
         for i in range(NUM_ENVS):
@@ -187,23 +185,34 @@ def main() -> None:
     tts_ok = tts[tts >= 0]
 
     print("=" * 72)
-    print(f"Pure-IK capture gate  (local goals {_arr(ep_g0).mean():.3f} m mean, "
-          f"{n} episodes, zero action)")
+    print(
+        f"Pure-IK capture gate  (local goals {_arr(ep_g0).mean():.3f} m mean, "
+        f"{n} episodes, zero action)"
+    )
     print("=" * 72)
     print(f"  success_once_10cm : {once.mean():.3f}   (PASS > {PASS_ONCE})")
     print(f"  success_hold_10cm : {hold.mean():.3f}   (PASS > {PASS_HOLD})")
     print(f"  success_5cm       : {once5.mean():.3f}")
-    print(f"  final EE   p50    : {np.percentile(final, 50):.3f}   p90 {np.percentile(final, 90):.3f}")
+    print(
+        f"  final EE   p50    : {np.percentile(final, 50):.3f}   p90 {np.percentile(final, 90):.3f}"
+    )
     print(f"  min EE     p50    : {np.percentile(mine, 50):.3f}")
     if len(tts_ok):
-        print(f"  time_to_success   : mean {tts_ok.mean():.0f} steps ({tts_ok.mean()*0.02:.2f}s)")
+        print(f"  time_to_success   : mean {tts_ok.mean():.0f} steps ({tts_ok.mean() * 0.02:.2f}s)")
     else:
         print("  time_to_success   : none")
     print(f"  joint-limit rate  : {jl.mean():.3f}")
     print(f"  collision rate    : {col.mean():.3f}")
-    pass_ok = bool(once.mean() > PASS_ONCE and hold.mean() > PASS_HOLD and col.mean() == 0.0 and jl.mean() < 0.01)
+    pass_ok = bool(
+        once.mean() > PASS_ONCE
+        and hold.mean() > PASS_HOLD
+        and col.mean() == 0.0
+        and jl.mean() < 0.01
+    )
     print("=" * 72)
-    print(f"  GATE: {'PASS — local arm controller qualified' if pass_ok else 'FAIL — not qualified'}")
+    print(
+        f"  GATE: {'PASS — local arm controller qualified' if pass_ok else 'FAIL — not qualified'}"
+    )
     print("=" * 72)
 
 

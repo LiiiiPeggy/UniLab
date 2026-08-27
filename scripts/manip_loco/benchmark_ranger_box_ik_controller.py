@@ -147,9 +147,7 @@ def run_mode(label: str, mode: str, kv: float) -> dict:
                 break
 
         ee_local, _ = env.get_ee_local_pose()
-        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         d_final = np.linalg.norm(ee_world_f - env.world_ee_goal, axis=1)
 
         for i in range(NUM_ENVS):
@@ -182,7 +180,9 @@ def run_mode(label: str, mode: str, kv: float) -> dict:
     print(f"  success_10cm : {suc10.mean():.3f}")
     print(f"  success_5cm  : {suc5.mean():.3f}")
     print(f"  final EE p50 : {np.percentile(final, 50):.3f}   p90 {np.percentile(final, 90):.3f}")
-    print(f"  EE overshoot : mean {swing.mean():.3f}   p50 {np.percentile(swing, 50):.3f}  (max-min swing)")
+    print(
+        f"  EE overshoot : mean {swing.mean():.3f}   p50 {np.percentile(swing, 50):.3f}  (max-min swing)"
+    )
     print(f"  mean |qdot|  : {vel.mean():.3f} rad/s")
     print(f"  joint-limit / collision rate: {jl.mean():.3f} / {col.mean():.3f}")
     ok = bool(suc10.mean() > PASS_SUCCESS)
@@ -198,8 +198,10 @@ def main() -> None:
     print("=" * 72)
     print("SUMMARY")
     for label, r in results.items():
-        print(f"  {label:28s}: success_10cm={r['success']:.3f}  final_p50={r['final']:.3f}  "
-              f"swing={r['swing']:.3f}")
+        print(
+            f"  {label:28s}: success_10cm={r['success']:.3f}  final_p50={r['final']:.3f}  "
+            f"swing={r['swing']:.3f}"
+        )
     print("=" * 72)
     print("\n=== done ===")
 

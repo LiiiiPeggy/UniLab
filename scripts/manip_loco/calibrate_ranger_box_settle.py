@@ -106,12 +106,16 @@ def neutralize_goal(env) -> None:
     env.world_ee_goal[:] = ee_world
 
 
-def run_hold(env, target: np.ndarray, *, n_steps: int = 600, reset_arm: np.ndarray | None = None) -> dict:
+def run_hold(
+    env, target: np.ndarray, *, n_steps: int = 600, reset_arm: np.ndarray | None = None
+) -> dict:
     env.reset(np.array([0]))
     env.init_state()
     neutralize_goal(env)
     if reset_arm is not None:
-        env._backend.set_joint_qpos(ARM_NAMES, np.asarray(reset_arm, dtype=np.float64).reshape(1, 6))
+        env._backend.set_joint_qpos(
+            ARM_NAMES, np.asarray(reset_arm, dtype=np.float64).reshape(1, 6)
+        )
         env._backend.set_joint_qvel(ARM_NAMES, np.zeros((1, 6), dtype=np.float64))
     # Target must be in place before the FIRST physics step too.
     env._ik_target[:] = target
@@ -198,12 +202,16 @@ def main() -> None:
     # ── Phase 2: reset=q*, target=home (proposed: move keyframe only) ──
     p2 = run_hold(env, HOME, reset_arm=q_star)
     env.close()
-    report_phase("Phase 2  reset=q*  target=home  (move keyframe ONLY)", p2, ref=q_star, target=HOME)
+    report_phase(
+        "Phase 2  reset=q*  target=home  (move keyframe ONLY)", p2, ref=q_star, target=HOME
+    )
 
     # ── Phase 3: reset=q*, target=q* (alternative: also move default_angles) ──
     p3 = run_hold(env, q_star, reset_arm=q_star)
     env.close()
-    report_phase("Phase 3  reset=q*  target=q*  (also move default_angles)", p3, ref=q_star, target=q_star)
+    report_phase(
+        "Phase 3  reset=q*  target=q*  (also move default_angles)", p3, ref=q_star, target=q_star
+    )
 
     # ── Phase 4: gravcomp off, reset=home, target=home (quantify gravcomp) ──
     scene0 = _make_temp_scene(gravcomp=0.0)

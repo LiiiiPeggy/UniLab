@@ -76,8 +76,10 @@ def main() -> None:
     print("AG95 gripper stability (native MuJoCo, base/arm fixed, IK/RL off)")
     print(f"  dt={m.opt.timestep:.4f}s  steps={STEPS}  joints={len(GRIPPER_JOINTS)}")
     print("=" * 96)
-    hdr = (f"{'damp':>5} {'tgt':>4} {'max|qd|':>8} {'rms|qd|':>8} {'pp q':>7} "
-           f"{'ss pp q':>8} {'ss rms qd':>9} {'fin q0':>6}")
+    hdr = (
+        f"{'damp':>5} {'tgt':>4} {'max|qd|':>8} {'rms|qd|':>8} {'pp q':>7} "
+        f"{'ss pp q':>8} {'ss rms qd':>9} {'fin q0':>6}"
+    )
     print(hdr)
 
     results = []
@@ -106,9 +108,7 @@ def main() -> None:
             max_qd = float(np.abs(qd_hist).max())
             pp_all = float(np.max(q_hist.max(axis=0) - q_hist.min(axis=0)))
             fin0 = float(q_hist[-1, 0])
-            results.append(
-                (damp, tgt, max_qd, rms_qd, pp_all, pp_ss, rms_qd, fin0)
-            )
+            results.append((damp, tgt, max_qd, rms_qd, pp_all, pp_ss, rms_qd, fin0))
             print(
                 f"{damp:>5.2f} {tgt:>4.1f} {max_qd:>8.3f} {rms_qd:>8.4f} {pp_all:>7.4f} "
                 f"{pp_ss:>8.4f} {rms_qd:>9.4f} {fin0:>6.3f}"
@@ -120,14 +120,16 @@ def main() -> None:
     print("  A stable fixed opening has small pp_ss, small rms_qd, and fin_q0 ≈ target.")
 
     # Best stable candidate: smallest steady-state oscillation with low damping.
-    best = min(results, key=lambda r: (r[5] + 10 * r[6]))
-    print(f"\n  best static (damp={best[0]:.2f}, target={best[1]:.2f}): "
-          f"ss_pp_q={best[5]:.4f} rad, rms_qd={best[6]:.4f} rad/s")
+    best = min(results, key=lambda r: r[5] + 10 * r[6])
+    print(
+        f"\n  best static (damp={best[0]:.2f}, target={best[1]:.2f}): "
+        f"ss_pp_q={best[5]:.4f} rad, rms_qd={best[6]:.4f} rad/s"
+    )
 
     # ── Dynamic scene: arm swinging, grip target fixed at 0 ──────────────────
     print("\n" + "-" * 96)
     print("Arm-swing perturbation (base fixed, arm ±0.05 rad @ 1 Hz, grip target=0):")
-    hdr2 = (f"{'damp':>5} {'grip_rms_qd':>12} {'grip_max_qd':>12} {'grip_pp_q':>9}")
+    hdr2 = f"{'damp':>5} {'grip_rms_qd':>12} {'grip_max_qd':>12} {'grip_pp_q':>9}"
     print(hdr2)
     for damp in DYNAMIC_DAMPINGS:
         mujoco.mj_resetDataKeyframe(m, d, 0)

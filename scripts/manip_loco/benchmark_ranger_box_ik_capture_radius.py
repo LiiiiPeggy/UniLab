@@ -114,8 +114,11 @@ def place_bin_goals(env, r_lo: float, r_hi: float) -> np.ndarray:
     goals_world = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, goal_local)
     goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
     env.world_ee_goal[:] = goals_world
-    return np.linalg.norm(goals_world - (env.armbase_pos_world + np_quat_apply_batched(
-        env.armbase_quat_world, ee_local)), axis=1)
+    return np.linalg.norm(
+        goals_world
+        - (env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)),
+        axis=1,
+    )
 
 
 def run_bin(r_lo: float, r_hi: float) -> dict:
@@ -165,9 +168,7 @@ def run_bin(r_lo: float, r_hi: float) -> dict:
                 break
 
         ee_local, _ = env.get_ee_local_pose()
-        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         d_final = np.linalg.norm(ee_world_f - env.world_ee_goal, axis=1)
 
         for i in range(NUM_ENVS):
@@ -219,8 +220,10 @@ def main() -> None:
     print("=" * 92)
     print("IK capture-radius benchmark (pure IK, radial shells, base stationary)")
     print("=" * 92)
-    header = (f"{'bin':>10} {'n':>4} {'g0':>5} {'once10':>6} {'hold10':>6} {'once5':>6} "
-              f"{'fin_mean':>8} {'fin_p50':>8} {'fin_p90':>8} {'min_p50':>7} {'tts':>5} {'jl':>4} {'col':>4}")
+    header = (
+        f"{'bin':>10} {'n':>4} {'g0':>5} {'once10':>6} {'hold10':>6} {'once5':>6} "
+        f"{'fin_mean':>8} {'fin_p50':>8} {'fin_p90':>8} {'min_p50':>7} {'tts':>5} {'jl':>4} {'col':>4}"
+    )
     print(header)
     results = []
     for lo, hi in BINS:

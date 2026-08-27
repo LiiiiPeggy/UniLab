@@ -117,9 +117,7 @@ def main() -> None:
     while n_episodes < EPISODES_TARGET:
         env.reset(np.arange(NUM_ENVS))
         ee_local, _ = env.get_ee_local_pose()
-        ee_world0 = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world0 = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         g0 = np.linalg.norm(ee_world0 - env.world_ee_goal, axis=1)
 
         per_env_min = np.full(NUM_ENVS, 1e9)
@@ -144,17 +142,13 @@ def main() -> None:
             ep_success_once5 |= d < SUCCESS_05
             ep_tts_steps = np.where(new10, step + 1, ep_tts_steps)
             arm = env.get_arm_dof_pos()
-            per_env_jl |= ((arm > env._arm_joint_upper) | (arm < env._arm_joint_lower)).any(
-                axis=1
-            )
+            per_env_jl |= ((arm > env._arm_joint_upper) | (arm < env._arm_joint_lower)).any(axis=1)
             per_env_col |= _min_arm_signed_dist(env, ee_world) < 0.0
             if np.all(ep_success_once):
                 break
 
         ee_local, _ = env.get_ee_local_pose()
-        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(
-            env.armbase_quat_world, ee_local
-        )
+        ee_world_f = env.armbase_pos_world + np_quat_apply_batched(env.armbase_quat_world, ee_local)
         d_final = np.linalg.norm(ee_world_f - env.world_ee_goal, axis=1)
 
         for i in range(NUM_ENVS):
@@ -184,16 +178,22 @@ def main() -> None:
     col = _arr(ep_collision).astype(bool)
 
     print("=" * 72)
-    print(f"Pure-IK reaching (redesigned task)  ({n_episodes} episodes, zero action, max {MAX_STEPS} steps)")
+    print(
+        f"Pure-IK reaching (redesigned task)  ({n_episodes} episodes, zero action, max {MAX_STEPS} steps)"
+    )
     print("=" * 72)
-    print(f"  initial goal-EE dist: mean {np.mean(_arr(ep_goal_dist)):.3f}  p90 {np.percentile(_arr(ep_goal_dist), 90):.3f}")
+    print(
+        f"  initial goal-EE dist: mean {np.mean(_arr(ep_goal_dist)):.3f}  p90 {np.percentile(_arr(ep_goal_dist), 90):.3f}"
+    )
     print(f"  success_10cm : {suc10.mean():.3f}")
     print(f"  success_5cm  : {suc5.mean():.3f}")
-    print(f"  final EE dist: mean {final.mean():.3f}  p50 {np.percentile(final, 50):.3f}  p90 {np.percentile(final, 90):.3f}")
+    print(
+        f"  final EE dist: mean {final.mean():.3f}  p50 {np.percentile(final, 50):.3f}  p90 {np.percentile(final, 90):.3f}"
+    )
     print(f"  min  EE dist : mean {mine.mean():.3f}  p50 {np.percentile(mine, 50):.3f}")
     tts_ok = tts[tts >= 0]
     if len(tts_ok):
-        print(f"  time_to_success: mean {tts_ok.mean():.0f} steps ({tts_ok.mean()*0.02:.2f}s)")
+        print(f"  time_to_success: mean {tts_ok.mean():.0f} steps ({tts_ok.mean() * 0.02:.2f}s)")
     else:
         print("  time_to_success: none")
     print(f"  joint-limit viol rate : {jl.mean():.3f}")
@@ -211,11 +211,13 @@ def main() -> None:
     print("\n  mean EE distance over steps:")
     ticks = [t for t in list(range(0, maxlen, 50)) + [maxlen - 1] if t < maxlen]
     for t in ticks:
-        print(f"    t={t*0.02:4.1f}s  EE={mean_curve[t]:.3f}m")
+        print(f"    t={t * 0.02:4.1f}s  EE={mean_curve[t]:.3f}m")
     diff = np.diff(mean_curve)
     valid = cnt[1:] >= 1
     mono = float(np.mean(diff[valid])) if valid.any() else 0.0
-    print(f"\n  mean d(EE)/step = {mono:.6f}  ({'steady decrease' if mono < 0 else 'NOT decreasing'})")
+    print(
+        f"\n  mean d(EE)/step = {mono:.6f}  ({'steady decrease' if mono < 0 else 'NOT decreasing'})"
+    )
 
     pass_ok = bool(suc10.mean() > PASS_SUCCESS and np.percentile(final, 50) < PASS_FINAL)
     print("\n" + "=" * 72)

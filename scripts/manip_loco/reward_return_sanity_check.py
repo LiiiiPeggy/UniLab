@@ -103,8 +103,14 @@ def _traj_linger() -> list[float]:
 def main() -> None:
     scales = _load_scales()
     print("Reward scales (from owner YAML):")
-    for k in ("ee_distance", "ee_progress", "ee_distance_l2", "success_once_10cm",
-              "success_once_05cm", "success_hold_10cm"):
+    for k in (
+        "ee_distance",
+        "ee_progress",
+        "ee_distance_l2",
+        "success_once_10cm",
+        "success_once_05cm",
+        "success_hold_10cm",
+    ):
         print(f"  {k:<20} {scales[k]:>8.3f}")
     print()
 
@@ -128,8 +134,11 @@ def main() -> None:
     print(f"  Return(A) = {ret_a:.3f}  vs  Return(B) = {ret_b:.3f}  vs  Return(C) = {ret_c:.3f}")
     print(f"  A > B: {ret_a > ret_b}    A > C: {ret_a > ret_c}")
     print()
-    print("PASS — hold-success dominates the exploit trajectories"
-          if ok else "FAIL — reward semantics allow the exploit")
+    print(
+        "PASS — hold-success dominates the exploit trajectories"
+        if ok
+        else "FAIL — reward semantics allow the exploit"
+    )
     return 0 if ok else 1
 
 
