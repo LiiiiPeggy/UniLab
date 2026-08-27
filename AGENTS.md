@@ -81,9 +81,12 @@ Registry packages declare `__unilab_registry_modules__` to list their bootstrap 
 **Backend isolation.** Env code only accesses methods declared on `SimBackend` (in `base/backend/base.py`). If a method only exists on `MuJoCoBackend` or `MotrixBackend`, it must first be added to `SimBackend` (can raise `NotImplementedError`). Never call backend subclass methods or use `getattr`/`hasattr` to probe backend capabilities from env code.
 
 **Mobile manipulator (RangerBoxReach) — A+ base scheme.** `envs/locomotion/ranger_box/` implements a wheeled-base + arm reaching env on a **freejoint kinematics base** (no wheel-ground contact physics). Key invariants learned the hard way:
-- **SE(2) planar lock**: freejoint gives 6-DOF but only vx/vy/yaw are used. Pin z + zero roll/pitch **preserving yaw** via quaternion→yaw→rebuild, not `qpos[:,3:7]=[1,0,0,0]`. Zero vz/wx/wy in qvel. Lock applied pre-physics step in `apply_action`.
+- **SE(2) planar lock**: freejoint gives 6-DOF but only vx/vy/yaw are used. Pin z + zero roll/pitch **preserving yaw** via quaternion→yaw→rebuild, not `qpos[:,3:7]=[1,0,0,0]`. Zero vz/wx/wy in qvel. Lock applied **post-physics** at the top of `update_state` (then `forward_sensors()` so obs/reward reads see the locked state).
 - **Kinematic arm control**: writing arm qpos directly is *not* stable with position actuators on a freejoint base (QACC explosion). Either drive position actuators with `forcelimited`/`forcerange` ctrl, or if writing qpos, do it **after** the physics step and call `backend.forward_sensors()` — direct qpos writes leave `_sensor_data` stale.
 - **MuJoCo state access**: `MuJoCoBackend` uses `_physics_state` / `_qpos_view` (batched), not `_data.qpos`. `forward_sensors()` needs `nstep>=1` (BatchEnv rejects `nstep=0`).
+- **Freejoint index split (qpos ≠ qvel)**: joint→index lookup differs per array — qpos indices come from `jnt_qposadr`, while qvel/damping/armature use `jnt_dofadr`. Under a freejoint the two differ by 7 slots; mixing them silently reads neighbor joints (symptom: all "gripper" qpos readings equal the base quaternion components).
+- **Base↔arm capture handoff**: `arm_weight` ramps linearly over EE-to-goal distance in `[capture_inner, capture_outer]`; base commands scale by `base_weight = 1 - arm_weight`, and the RL arm residual scales by `arm_weight`. Success rewards are **event-based** (`_EVENT_REWARD_NAMES`: first-entry once + hold terminal bonus) and must NOT be multiplied by ctrl_dt — only continuous rewards integrate × ctrl_dt in `_compute_reward`.
+- **AG95 gripper needs joint damping**: the finger linkage is passive (hard equality constraints, no actuator holding it), so without `damping` on every gripper joint in `robot.xml` it oscillates whenever the arm moves. Opening is config-held via `control_config.gripper_hold_position` — the gripper is deliberately outside the action space.
 - **EE sensor frame**: `<framepos>`/`<framequat>` without `reftype`/`refname` return **world-frame** coordinates. For armbase-local EE pose, set `reftype="site" refname="<armbase_site>"`.
 - **Keyframe z must match wheel geometry**: `home` keyframe z is what reset uses (YAML `init_state.pos` does **not** override `_init_qpos`); set it so wheels rest on the floor, not embedded in it.
 
@@ -106,6 +109,16 @@ MuJoCo is the default backend. Motrix requires `uv sync --extra motrix` and uses
 ### Test layout
 
 Tests mirror `src/unilab/` structure. Slow tests (tagged `@pytest.mark.slow`) cover training smoke tests, long-running integrations, and backend matrices — skipped in `make test`, run with `make test-slow`. Config tests validate the Hydra composition tree. NaN injection tests (`tests/nan_injection/`) use spawn-based subprocess testing for numerical stability.
+
+### Env test traps
+
+Sharp edges when driving envs directly in tests (each caused a real flaky/failing test):
+
+- **Call `env.init_state()` before `env.reset()`** when goal identity matters. Public `reset()` rebuilds physics but leaves `self._state = None`; the first `step()` then calls `init_state()` internally — an extra reset that **re-samples goals** and breaks assertions on `_goal_is_local` / goal positions nondeterministically.
+- **Zero `info["steps"]` between manual eval rounds**: `init_state()` draws `steps ~ randint[0, max_episode_steps)` and public reset doesn't clear it, so episodes after round one truncate at step 1. Multi-round deterministic eval must set `env.state.info["steps"][:] = 0` before each round.
+- **Stochastic goal mixes need resample loops**: e.g. 4 envs × local_fraction 0.30 draws all-EXTENDED ~24% of the time — any test asserting a mixed LOCAL/EXTENDED population should reset in a bounded loop until the mix holds.
+- **Registry `make()` uses dataclass defaults, not training values**: e.g. RangerBoxReach dataclass IKConfig is gain 1.0 / damping 0.05 while `conf/ppo/task/ranger_box_reach/mujoco.yaml` trains with gain 1.5 / damping 0.02. Tests that depend on exact IK/controller convergence must compose Hydra + `create_env` the way training does.
+- **Renderer scenes need a sized scene**: construct `MjvScene(model, maxgeom)` — parameterless / single-arg constructors leave the geoms array empty or fail; the grid camera auto-fit helper is `compute_grid_camera_distance` (`unilab.visualization.render_many`), used whenever configured cam_distance is None/≤0.
 
 ## Core Principles
 
@@ -162,8 +175,9 @@ Do not add new owner logic under `src/unilab/utils/`. Current files there are tr
 - env contract: `src/unilab/base/np_env.py`
 - backend contract: `src/unilab/base/backend/base.py` (incl. `set_root_planar_velocity`, `set_joint_qpos/qvel`, `forward_sensors`)
 - mobile manipulator: `src/unilab/envs/locomotion/ranger_box/` (reach_env, base_velocity_controller)
+- ranger-box eval / diagnostics: `scripts/manip_loco/` (per-checkpoint deterministic eval, episode tracer, IK-capture-radius / controller / gripper-stability / torque-margin benchmarks)
 - training run helpers: `src/unilab/training/run.py`
-- visualization helpers: `src/unilab/visualization/`
+- visualization helpers: `src/unilab/visualization/` (grid renderer; auto-fit camera via `compute_grid_camera_distance`)
 - env shared numeric helpers: `src/unilab/envs/common/rotation.py`, `src/unilab/envs/common/math.py`
 - MLX rotation helpers: `src/unilab/algos/mlx/common/rotation.py`
 - config schema: `src/unilab/structured_configs.py`

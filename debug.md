@@ -4,7 +4,7 @@
 
 提交 `f8c3e6e9`：armbasepoint 移到 base body、signed-distance 碰撞奖励、
 action 10→9 / obs 41→39、velocimeter linvel、progress+success+stop-near 奖励、
-alive=0、goal rejection sampling、history=5、obs_groups 加 critic。
+alive 奖励置零、goal rejection sampling、history=5、obs_groups 加 critic。
 
 ```
 Final (iter 999/1000):
@@ -22,7 +22,7 @@ Final (iter 999/1000):
 
 ### 结论
 - 网络 I/O 正确（195=39×5 obs，9 action），无 critic 警告。
-- mean reward 3.71 远低于旧 2000-iter 的 7~8，但这是**去除 alive=0.3 之后
+- mean reward 3.71 远低于旧 2000-iter 的 7~8，但这是**去除 alive 0.3 常量奖励之后
   的真实任务 reward**（旧值约 40% 是无信息固定奖励），数值不可直接比较。
 - best reward 45.50 显著高于旧 best 34.7，说明新 reward 结构下策略确实
   学到了更强的 reaching 行为。
