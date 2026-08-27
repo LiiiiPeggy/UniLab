@@ -1,6 +1,6 @@
 """CR10 passive-stability benchmark — gravcomp / joint-damping / actuator-kd ablation.
 
-Run:  uv run python scripts/manip_loco/benchmark_ranger_box_physics.py
+Run:  uv run scripts/manip_loco/benchmark_ranger_box_physics.py
 
 Pure physics test: base fixed, arm at home, NO policy / IK / noise / latency /
 DR.  Runs 500 steps and reports per-joint overshoot, settling time,

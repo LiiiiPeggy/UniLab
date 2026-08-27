@@ -1,6 +1,6 @@
 """Deterministic smoke tests for RangerBoxReach (Test A/B/C).
 
-Run with:  uv run python scripts/manip_loco/diagnose_ranger_box_reach.py
+Run with:  uv run scripts/manip_loco/diagnose_ranger_box_reach.py
 
 Test A — arm static hold:   base fixed, action=0, IK=0, home target, 10 s.
 Test B — pure-IK reach:     base fixed, RL residual=0, IK on, one reachable goal.

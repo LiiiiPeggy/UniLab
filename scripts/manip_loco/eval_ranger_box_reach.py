@@ -1,7 +1,7 @@
 """Deterministic per-checkpoint eval for RangerBoxReach — hard metrics, not reward.
 
 Usage:
-  uv run python scripts/manip_loco/eval_ranger_box_reach.py \
+  uv run scripts/manip_loco/eval_ranger_box_reach.py \
       --load-run <run_dir> --num-envs 16 --rounds 13 \
       --checkpoints 50 100 200 299
 
@@ -76,12 +76,17 @@ CLEAN_OVERRIDES = [
 ]
 
 
-def _build_env(num_envs: int):
+def _build_env(num_envs: int, arm_action_scale: float | None = None):
     ensure_registries()
+    overrides = list(CLEAN_OVERRIDES)
+    if arm_action_scale is not None:
+        # Match the training-time controller scale (deterministic eval must not
+        # reintroduce an arm residual the policy was trained without).
+        overrides.append(f"env.control_config.arm_action_scale={arm_action_scale}")
     with initialize_config_dir(version_base="1.3", config_dir=CONF_DIR):
         cfg = compose(
             config_name="config",
-            overrides=["task=ranger_box_reach/mujoco", f"algo.num_envs={num_envs}"] + CLEAN_OVERRIDES,
+            overrides=["task=ranger_box_reach/mujoco", f"algo.num_envs={num_envs}"] + overrides,
         )
     env_cfg_override = BackendAdapter(cfg, root_dir=ROOT_DIR).build_task_env_cfg_override()
     return create_env(cfg, num_envs=num_envs, env_cfg_override=env_cfg_override), cfg
@@ -138,8 +143,18 @@ def _new_episode(env, i: int, d0: float, base_xy: np.ndarray) -> dict:
     }
 
 
-def run_checkpoint(env, wrapped, runner, policy, *, num_envs: int, rounds: int,
-                   capture_inner: float, capture_outer: float, device: str) -> list[dict]:
+def run_checkpoint(
+    env,
+    wrapped,
+    runner,
+    policy,
+    *,
+    num_envs: int,
+    rounds: int,
+    capture_inner: float,
+    capture_outer: float,
+    device: str,
+) -> list[dict]:
     aw_span = max(capture_outer - capture_inner, 1e-6)
     finished: list[dict] = []
 
@@ -297,7 +312,9 @@ def _agg(rows: list[dict]) -> dict:
         reasons[r["done_reason"]] = reasons.get(r["done_reason"], 0) + 1
     # success after capture: of the episodes that entered the capture region,
     # how many eventually held success
-    sac = float(np.mean([1.0 if r["hold10"] else 0.0 for r in entered])) if entered else float("nan")
+    sac = (
+        float(np.mean([1.0 if r["hold10"] else 0.0 for r in entered])) if entered else float("nan")
+    )
     return {
         "n": n,
         "success_once_10cm": rate("once10"),
@@ -312,7 +329,9 @@ def _agg(rows: list[dict]) -> dict:
         "time_to_capture_mean": float(np.mean(ttc_ok)) if ttc_ok else float("nan"),
         "capture_to_success_mean": float(np.mean(c2s)) if c2s else float("nan"),
         "success_after_capture": sac,
-        "capture_escape_rate": float(np.mean([1.0 if r["exits_after_entry"] > 0 else 0.0 for r in rows])),
+        "capture_escape_rate": float(
+            np.mean([1.0 if r["exits_after_entry"] > 0 else 0.0 for r in rows])
+        ),
         "base_disp_mean": m("base_disp"),
         "base_path_mean": m("base_path"),
         "final_base_goal_horiz_mean": m("final_base_goal_horiz"),
@@ -396,10 +415,17 @@ def main() -> None:
     ap.add_argument("--num-envs", type=int, default=16)
     ap.add_argument("--rounds", type=int, default=13, help="episodes = num_envs * rounds")
     ap.add_argument("--checkpoints", type=int, nargs="+", default=[50, 100, 200, 299])
+    ap.add_argument(
+        "--arm-action-scale",
+        type=float,
+        default=None,
+        help="Override env.control_config.arm_action_scale to match the "
+        "training contract (e.g. 0.0 when the run trained without residual).",
+    )
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    env, cfg = _build_env(args.num_envs)
+    env, cfg = _build_env(args.num_envs, arm_action_scale=args.arm_action_scale)
     env.set_autoreset(False)
     capture_inner = float(getattr(env._cfg.goal_ee, "capture_inner", 0.15))
     capture_outer = float(getattr(env._cfg.goal_ee, "capture_outer", 0.20))
@@ -433,15 +459,26 @@ def main() -> None:
         policy = runner.get_inference_policy(device=device)
 
         rows = run_checkpoint(
-            env, wrapped, runner, policy,
-            num_envs=args.num_envs, rounds=args.rounds,
-            capture_inner=capture_inner, capture_outer=capture_outer, device=device,
+            env,
+            wrapped,
+            runner,
+            policy,
+            num_envs=args.num_envs,
+            rounds=args.rounds,
+            capture_inner=capture_inner,
+            capture_outer=capture_outer,
+            device=device,
         )
         local = _agg([r for r in rows if r["is_local"]])
         extended = _agg([r for r in rows if not r["is_local"]])
         allr = _agg(rows)
-        out = {"checkpoint": it, "num_episodes": len(rows), "local": local,
-               "extended": extended, "all": allr}
+        out = {
+            "checkpoint": it,
+            "num_episodes": len(rows),
+            "local": local,
+            "extended": extended,
+            "all": allr,
+        }
 
         rew = float("nan")
         if len(tb_it):
@@ -479,8 +516,10 @@ def main() -> None:
         print("\n" + "=" * 100)
         print("Run-3 stage summary  (LOCAL/EXTENDED split, deterministic mean-action eval)")
         print("=" * 100)
-        hdr = (f"{'iter':>5} {'rew':>7} {'LOConce':>8} {'LOChold':>8} {'EXTcap':>7} "
-               f"{'EXThold':>8} {'EXTp50':>7} {'EXTdisp':>8} {'col':>5} {'jl':>5}")
+        hdr = (
+            f"{'iter':>5} {'rew':>7} {'LOConce':>8} {'LOChold':>8} {'EXTcap':>7} "
+            f"{'EXThold':>8} {'EXTp50':>7} {'EXTdisp':>8} {'col':>5} {'jl':>5}"
+        )
         print(hdr)
         for r in summary_rows:
             print(

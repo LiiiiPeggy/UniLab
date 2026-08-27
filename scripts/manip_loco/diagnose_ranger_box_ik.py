@@ -1,6 +1,6 @@
 """Deterministic IK windup diagnostic for RangerBoxReach.
 
-Run:  uv run python scripts/manip_loco/diagnose_ranger_box_ik.py
+Run:  uv run scripts/manip_loco/diagnose_ranger_box_ik.py
 
 Tests a grid of fixed goals at varying distance / direction from the armbase,
 recording whether the persistent IK target stays bounded (no windup) or rails
