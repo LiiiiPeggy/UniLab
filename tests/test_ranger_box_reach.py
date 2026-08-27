@@ -253,6 +253,58 @@ class TestRangerBoxReachEnv:
         base_world = env4._backend.get_base_pos()
         assert np.allclose(env4._traj_base[:, -1], base_world, atol=1e-6)
 
+    def test_goal_config_local_extended_fields(self, env4):
+        from unilab.envs.locomotion.ranger_box.reach_env import RangerBoxEEGoalConfig
+
+        cfg = RangerBoxEEGoalConfig()
+        assert cfg.local_fraction == 0.30
+        assert cfg.local_radius_range == (0.10, 0.15)
+        assert cfg.extended_radius_range == (0.30, 0.70)
+        assert cfg.capture_inner < cfg.capture_outer
+        # Old spherical reachable fields are gone from the ranger config.
+        assert not hasattr(cfg, "reachable_fraction")
+
+    def test_reset_goals_local_extended_radial(self, env4):
+        from unilab.envs.common.rotation import np_quat_apply_batched
+
+        env4.reset(np.arange(4))
+        ee_local, _ = env4.get_ee_local_pose()
+        ee_world = env4.armbase_pos_world + np_quat_apply_batched(
+            env4.armbase_quat_world, ee_local
+        )
+        d = np.linalg.norm(ee_world - env4.world_ee_goal, axis=1)
+        loc = env4._goal_is_local
+        assert 0.0 < loc.mean() < 1.0  # mixed local/extended
+        cfg = env4._cfg.goal_ee
+        assert np.all(d[loc] >= cfg.local_radius_range[0] - 1e-3)
+        assert np.all(d[loc] <= cfg.local_radius_range[1] + 1e-3)
+        assert np.all(d[~loc] >= cfg.extended_radius_range[0] - 1e-3)
+        assert np.all(d[~loc] <= cfg.extended_radius_range[1] + 1e-3)
+        # Radial (goal-EE distance == |goal_local - ee_local|), not boxed.
+        gl = env4._world_goal_to_armbase(env4.world_ee_goal, env4.armbase_pos_world, env4.armbase_quat_world)
+        assert np.allclose(np.linalg.norm(gl - ee_local, axis=1), d, atol=1e-3)
+
+    def test_capture_gate_arm_weight_by_distance(self, env4):
+        # The arm-engagement gate ramps arm_weight on the EE-to-goal distance:
+        # LOCAL goals (within capture_inner) → fully engaged; EXTENDED goals
+        # (beyond capture_outer) → disengaged (held at the ready pose).
+        env4.reset(np.arange(4))
+        cfg = env4._cfg.goal_ee
+        ee_local, _ = env4.get_ee_local_pose()
+        gl = env4._world_goal_to_armbase(
+            env4.world_ee_goal, env4.armbase_pos_world, env4.armbase_quat_world
+        )
+        ee_error = np.linalg.norm(gl - ee_local, axis=1)
+        aw = np.clip(
+            (cfg.capture_outer - ee_error) / max(cfg.capture_outer - cfg.capture_inner, 1e-6),
+            0.0,
+            1.0,
+        )
+        loc = env4._goal_is_local
+        assert loc.any() and (~loc).any()  # mixed local/extended at reset
+        assert np.all(aw[loc] > 0.99)  # local goals fully engaged
+        assert np.all(aw[~loc] < 0.01)  # extended goals disengaged
+
     def test_armbase_ee_goal_nonzero_after_reset(self, env4):
         env4.reset(np.arange(4))
         assert not np.allclose(env4.armbase_ee_goal, 0.0)

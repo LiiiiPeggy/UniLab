@@ -280,17 +280,35 @@ def build_ranger_box_position_gains(cc: RangerBoxControlConfig) -> dict[str, np.
 
 @dataclass
 class RangerBoxEEGoalConfig(EEGoalConfig):
-    """RangerBox goal sampling: reachable + extended spherical shells.
+    """RangerBox goal sampling: LOCAL (arm capture region) + EXTENDED (base nav).
 
-    ``reachable_fraction`` of goals are sampled from ``sphere_l_range``
-    (within arm reach), the rest from ``extended_l_range`` (beyond reach,
-    requiring base navigation).  Set ``reachable_fraction`` to 1.0 during the
-    arm-tracking stage so IK never chases an unreachable goal and jams the arm
-    into its joint limits.
+    Goals are sampled by TRUE radial distance from the current EE
+    (direction = random unit vector, then scale by a radius) — NOT an
+    axis-aligned Cartesian box, which would let |delta| exceed the radius.
+
+    - LOCAL goals (``local_fraction``): EE-to-goal distance in
+      ``local_radius_range``.  These sit inside the arm's reliable capture
+      radius and are IK-feasibility filtered at reset.
+    - EXTENDED goals: EE-to-goal distance in ``extended_radius_range``.  These
+      require the base to navigate the goal into the arm's capture region
+      (they are NOT IK-feasibility filtered — the IK is not expected to reach
+      them alone).
+
+    ``capture_inner`` / ``capture_outer`` define the arm-capture region in
+    EE-to-goal distance, used by the arm-engagement gate in apply_action:
+    fully engaged within ``capture_inner``, blended between, held at the ready
+    pose beyond ``capture_outer``.
     """
 
-    reachable_fraction: float = 0.30
-    extended_l_range: list[float] = field(default_factory=lambda: [0.5, 1.2])
+    local_fraction: float = 0.30
+    # Measured reliable capture radius (benchmark_ranger_box_ik_capture_radius):
+    # once10/hold10 > 0.95 within 0.15 m, drops to ~0.65 at 0.15-0.20 m.
+    # LOCAL goals sit inside capture_inner (fully engaged); capture_outer is
+    # the blend boundary toward the base-navigation regime.
+    local_radius_range: tuple[float, float] = (0.10, 0.15)
+    extended_radius_range: tuple[float, float] = (0.30, 0.70)
+    capture_inner: float = 0.15
+    capture_outer: float = 0.20
 
 
 @registry.envcfg("RangerBoxReach")
@@ -686,19 +704,22 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             ee_local_quat,
         )
 
-        # Arm-engagement gate (Task 5): IK-feasibility based, NOT the old
-        # "goal closer than 0.70 m to the armbase" distance gate.  Goals are
-        # sampled in the local-EE workspace and filtered for feasibility at
-        # reset, so the arm stays engaged for any goal within the arm's
-        # physical workspace.  The gate only disengages (→ home-return) when
-        # the goal is genuinely unreachable: beyond max reach, or the DLS IK
-        # makes no correction while the goal is not yet reached.
-        pos_err_norm = np.linalg.norm(self.armbase_ee_goal - ee_local_pos, axis=1)
-        goal_reach = np.linalg.norm(self.armbase_ee_goal, axis=1)
-        in_workspace = goal_reach < 1.40  # arm max reach ~1.33 m + margin
-        at_goal = pos_err_norm < 0.02
-        making_progress = np.linalg.norm(dq_ik, axis=1) > 1e-4
-        arm_weight = np.where(in_workspace & (at_goal | making_progress), 1.0, 0.0)
+        # Arm-engagement gate (Task 6): capture-region based on the EE-to-goal
+        # distance, NOT goal-to-armbase distance and NOT dq_ik nonzero.  The
+        # arm's reliable capture radius was measured empirically (~0.2 m), so:
+        #   ee_error <= capture_inner  → arm fully engaged (arm_weight = 1)
+        #   capture_inner < ee_error < capture_outer → linear blend
+        #   ee_error >= capture_outer → arm holds the ready pose (arm_weight=0)
+        # and the base is responsible for bringing the goal into the region.
+        goal_cfg = self._cfg.goal_ee
+        capture_inner = float(getattr(goal_cfg, "capture_inner", 0.18))
+        capture_outer = float(getattr(goal_cfg, "capture_outer", 0.25))
+        ee_error = np.linalg.norm(self.armbase_ee_goal - ee_local_pos, axis=1)
+        arm_weight = np.clip(
+            (capture_outer - ee_error) / max(capture_outer - capture_inner, 1e-6),
+            0.0,
+            1.0,
+        )
 
         # Anti-windup on dq: once the ACTUAL joint is at the soft limit, stop
         # commanding further motion in the direction that would push it out.
@@ -1132,6 +1153,8 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64), (self._num_envs, 1)
         )
         self._arm_goal_timer = np.zeros((self._num_envs,), dtype=np.int32)
+        # LOCAL (True) vs EXTENDED (False) goal type per env, set at reset.
+        self._goal_is_local = np.zeros((self._num_envs,), dtype=bool)
         # Eval trajectory recording (play/video only).  Recording is disabled
         # during training; the first eval_visualization_markers() call enables
         # it.  NaN marks slots not yet filled so the renderer skips them.
@@ -1169,26 +1192,38 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         return np.concatenate([self.world_ee_goal, ee_world, base_flat, ee_flat], axis=1)
 
     def eval_visualization_text(self) -> list[str]:
-        """Per-env debug strings for the video overlay: id, EE distance, flag."""
+        """Per-env debug strings for the video overlay (Task 8).
+
+        Format: "env{i} {LOC|EXT} d={EE-goal dist} aw={arm_weight} {flag}".
+        Shows the base→capture-region→arm-takeover transition in playback.
+        """
         ee_local, _ = self.get_ee_local_pose()
         ee_world = self.armbase_pos_world + np_quat_apply_batched(self.armbase_quat_world, ee_local)
         d = np.linalg.norm(ee_world - self.world_ee_goal, axis=1)
+        goal_cfg = self._cfg.goal_ee
+        ci = float(getattr(goal_cfg, "capture_inner", 0.18))
+        co = float(getattr(goal_cfg, "capture_outer", 0.25))
+        aw = np.clip((co - d) / max(co - ci, 1e-6), 0.0, 1.0)
         out = []
         for i in range(self._num_envs):
+            gtype = "LOC" if self._goal_is_local[i] else "EXT"
             flag = "SUCCESS" if self._success_once[i] else "run"
-            out.append(f"env{i} d={d[i]:.2f}m {flag}")
+            out.append(f"env{i} {gtype} d={d[i]:.2f} aw={aw[i]:.2f} {flag}")
         return out
 
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:
-        """Sample EE goals in the local-EE workspace (Task-4 redesign).
+        """Sample LOCAL / EXTENDED EE goals by TRUE radial distance (Task 4).
 
-        goal = current EE + delta, with delta in the armbase frame:
-          x ~ U(-0.30, 0.30), y ~ U(-0.30, 0.30), z ~ U(-0.20, 0.30).
-        Rejection-sampled against (see ``_goal_infeasible``): below floor,
-        inside the chassis, or IK-infeasible from the current arm state
-        (joint-limit violation / no linearized progress).  Fallback after all
-        attempts: a small forward-down reach, guaranteed locally reachable
-        from the well-conditioned ready pose.
+        goal = current EE + r * u,  u = random unit vector, r ~ radius range.
+
+        - LOCAL (``local_fraction``): r in ``local_radius_range`` — inside the
+          arm's reliable capture radius; fully IK-feasibility filtered.
+        - EXTENDED: r in ``extended_radius_range`` — requires base navigation;
+          only physical sanity is checked (floor / chassis), NOT IK feasibility
+          (the base brings the goal into the capture region).
+
+        Rejection-sampled; fallback after all attempts is a small forward-down
+        reach (guaranteed locally reachable).
         """
         n = len(env_ids)
         rng = np.random
@@ -1199,34 +1234,47 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         armbase_pos = self.armbase_pos_world[env_ids]
         armbase_quat = self.armbase_quat_world[env_ids]
 
-        def _sample_delta(size: int) -> np.ndarray:
-            return np.stack(
-                [
-                    rng.uniform(-0.30, 0.30, size=size),
-                    rng.uniform(-0.30, 0.30, size=size),
-                    rng.uniform(-0.20, 0.30, size=size),
-                ],
-                axis=1,
-            )
+        is_local = rng.random(n) < float(goal_cfg.local_fraction)
+        self._goal_is_local[env_ids] = is_local
 
-        delta = _sample_delta(n)
+        def _sample_radial(r_lo: float, r_hi: float, size: int) -> np.ndarray:
+            v = rng.standard_normal((size, 3))
+            v /= np.linalg.norm(v, axis=1, keepdims=True) + 1e-9
+            r = rng.uniform(r_lo, r_hi, size=size)
+            return v * r[:, None]
+
+        delta = np.zeros((n, 3), dtype=np.float64)
+        n_loc = int(is_local.sum())
+        n_ext = n - n_loc
+        if n_loc > 0:
+            delta[is_local] = _sample_radial(*goal_cfg.local_radius_range, n_loc)
+        if n_ext > 0:
+            delta[~is_local] = _sample_radial(*goal_cfg.extended_radius_range, n_ext)
+
         goal_local = ee_local + delta
         goals_world = armbase_pos + np_quat_apply_batched(armbase_quat, goal_local)
         goals_world[:, 2] = np.maximum(goals_world[:, 2], 0.15)
 
-        bad = self._goal_infeasible(env_ids, goal_local, goals_world)
+        bad = self._goal_infeasible(env_ids, goal_local, goals_world, require_ik=is_local)
         for _attempt in range(goal_cfg.num_resample_attempts):
             if not bad.any():
                 break
             n_bad = int(bad.sum())
-            new_delta = _sample_delta(n_bad)
+            bad_local = is_local[bad]
+            n_bl = int(bad_local.sum())
+            n_be = n_bad - n_bl
+            new_delta = np.zeros((n_bad, 3), dtype=np.float64)
+            if n_bl > 0:
+                new_delta[bad_local] = _sample_radial(*goal_cfg.local_radius_range, n_bl)
+            if n_be > 0:
+                new_delta[~bad_local] = _sample_radial(*goal_cfg.extended_radius_range, n_be)
             delta[bad] = new_delta
             goal_local[bad] = ee_local[bad] + new_delta
             goals_world[bad] = armbase_pos[bad] + np_quat_apply_batched(
                 armbase_quat[bad], goal_local[bad]
             )
             goals_world[bad, 2] = np.maximum(goals_world[bad, 2], 0.15)
-            bad = self._goal_infeasible(env_ids, goal_local, goals_world)
+            bad = self._goal_infeasible(env_ids, goal_local, goals_world, require_ik=is_local)
 
         if bad.any():
             # Fallback: small forward-down reach (guaranteed locally reachable).
@@ -1245,8 +1293,17 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         env_ids: np.ndarray,
         goal_local: np.ndarray,
         goals_world: np.ndarray,
+        *,
+        require_ik: np.ndarray,
     ) -> np.ndarray:
-        """Return True where the sampled goal is not reachable from the current arm state."""
+        """Return True where a goal must be rejected.
+
+        For every goal: below floor or inside the chassis.  For LOCAL goals
+        (``require_ik`` True): additionally the damped-LS correction from the
+        current arm state must stay inside the soft range and move the EE
+        toward the goal.  EXTENDED goals are NOT rejected for IK reachability —
+        the base is expected to navigate them into the arm capture region.
+        """
         base_pos_w = self._backend.get_base_pos()[env_ids]
         base_quat_w = self._backend.get_base_quat()[env_ids]
 
@@ -1262,9 +1319,13 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # 2. Below floor.
         below_floor = goals_world[:, 2] < 0.15
 
+        bad = inside_chassis | below_floor
+        if not np.asarray(require_ik).any():
+            return bad
+
         # 3. IK feasibility from the current (ready-pose) arm state: the
         #    damped-LS correction must stay inside the soft range and move the
-        #    EE toward the goal.
+        #    EE toward the goal.  Only applied to LOCAL goals.
         ee_local, _ = self.get_ee_local_pose()
         ee_local = ee_local[env_ids]
         q_actual = self.get_arm_dof_pos()[env_ids]
@@ -1290,7 +1351,9 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         pred = np.matmul(jacp_b, dq[:, :, None])[:, :, 0]
         no_progress = (pred * pos_err).sum(axis=1) <= 0
 
-        return inside_chassis | below_floor | out_of_range | no_progress
+        ik_bad = out_of_range | no_progress
+        ik_bad = np.where(np.asarray(require_ik), ik_bad, False)
+        return bad | ik_bad
 
     def _world_goal_to_armbase(self, world_goal, armbase_pos, armbase_quat):
         rel = world_goal - armbase_pos

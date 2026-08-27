@@ -92,13 +92,20 @@ env:
     velocity_damping: 0.0
     controller_mode: resolved_rate
   goal_ee:
-    sphere_l_range: [0.20, 0.50]
-    extended_l_range: [0.50, 1.20]
-    reachable_fraction: 0.30
-    sphere_phi_range: [-1.20, 1.00]
-    sphere_theta_range: [-2.00, 2.00]
-    traj_time_range: [1.0, 3.0]
-    hold_time_range: [0.5, 2.0]
+    # LOCAL goals (within the arm's reliable capture radius) vs EXTENDED goals
+    # (require base navigation).  Sampled by true radial distance from the EE.
+    # Radius ranges measured by benchmark_ranger_box_ik_capture_radius.py:
+    # the arm reliably reaches (once10 > 0.9) only within ~0.15 m, so the
+    # LOCAL range is [0.10, 0.15] and the capture region is 0.13/0.18.
+    local_fraction: 0.30
+    local_radius_range: [0.10, 0.15]
+    extended_radius_range: [0.30, 0.70]
+    # Arm-capture region (EE-to-goal distance) for the arm-engagement gate.
+    # capture_inner = the measured reliable capture radius (0.15 m); LOCAL
+    # goals sit inside it (fully engaged); the blend runs to capture_outer.
+    capture_inner: 0.15
+    capture_outer: 0.20
+    num_resample_attempts: 10
     init_ee_cart: [0.30, 0.0, 0.30]
   base_velocity_controller:
     max_lin_vel: 1.5
