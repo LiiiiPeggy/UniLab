@@ -79,7 +79,9 @@ training:
   play_env_num: 16
   render_spacing: 1.0
   play_steps: 200
-  cam_distance: 6.0
+  # cam_distance=null → auto-fit to the env grid (see render_many.
+  # compute_grid_camera_distance); an explicit value overrides the auto-fit.
+  cam_distance: null
   cam_elevation: -20.0
   cam_azimuth: 90.0
   cam_lookat: null

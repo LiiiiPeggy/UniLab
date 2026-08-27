@@ -135,6 +135,11 @@ class RangerBoxControlConfig(ControlConfig):
     arm_kd: tuple[float, ...] = (0.5, 0.55, 0.48, 0.25, 0.25, 0.25)
     gripper_kp: float = 50.0
     gripper_kd: float = 5.0
+    # Fixed gripper opening for the reaching task (no grasp training, so the
+    # gripper never enters the action space).  Kept at the reset value so there
+    # is no transient; the passive AG95 linkage is stabilised by joint damping
+    # (see benchmark_ranger_box_gripper_stability.py).
+    gripper_hold_position: float = 0.0
     arm_max_delta_per_step: float = 0.05
     # Terminate episodes when the arm hits a hard joint limit.  During the
     # arm-learning stage this kills the learning signal (exploration always
@@ -399,12 +404,33 @@ def _reward_ee_progress(ctx: _RewardContext) -> np.ndarray:
     return ctx.prev_ee_dist - d
 
 
-def _reward_success_10cm(ctx: _RewardContext) -> np.ndarray:
-    return (_ee_world_distance(ctx) < 0.10).astype(np.float64)
+def _reward_success_once_10(ctx: _RewardContext) -> np.ndarray:
+    """First-entry bonus: +1 only on the FIRST step inside 10 cm, never again.
+
+    Previously this fired on every in-threshold step, so a policy could cross
+    the 10 cm boundary repeatedly and farm the bonus without ever holding.
+    """
+    return (
+        ctx.info.get("event_success_once_10", np.zeros(ctx.num_envs, dtype=bool))
+    ).astype(np.float64)
 
 
-def _reward_success_05cm(ctx: _RewardContext) -> np.ndarray:
-    return (_ee_world_distance(ctx) < 0.05).astype(np.float64)
+def _reward_success_once_05(ctx: _RewardContext) -> np.ndarray:
+    """First-entry bonus for 5 cm (see _reward_success_once_10)."""
+    return (
+        ctx.info.get("event_success_once_05", np.zeros(ctx.num_envs, dtype=bool))
+    ).astype(np.float64)
+
+
+def _reward_success_hold_10cm(ctx: _RewardContext) -> np.ndarray:
+    """Terminal bonus: +1 on the single step where held-success is achieved.
+
+    Aligns reward with the desired terminal state: holding 10 cm for 0.5 s is
+    the best outcome and terminates the episode on that same step.
+    """
+    return (
+        ctx.info.get("event_success_hold", np.zeros(ctx.num_envs, dtype=bool))
+    ).astype(np.float64)
 
 
 def _reward_base_vel_xy(ctx: _RewardContext) -> np.ndarray:
@@ -476,6 +502,7 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
         env._ik_target[env_ids] = env._default_arm_angles
         env._success_hold_timer[env_ids] = 0
         env._success_once[env_ids] = False
+        env._success_once_05[env_ids] = False
         env._success_hold[env_ids] = False
         env._steps_to_success[env_ids] = 0
         env._base_controller.reset(env_ids, np.random.default_rng())
@@ -583,8 +610,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # Success tracking (for held-success early termination + eval metrics).
         self._success_hold_timer = np.zeros((num_envs,), dtype=np.int32)
         self._success_once = np.zeros((num_envs,), dtype=bool)
+        self._success_once_05 = np.zeros((num_envs,), dtype=bool)
         self._success_hold = np.zeros((num_envs,), dtype=bool)
         self._steps_to_success = np.zeros((num_envs,), dtype=np.int32)
+        # Base↔arm capture handoff weights (set each apply_action).
+        self._arm_weight = np.zeros((num_envs,), dtype=np.float64)
+        self._base_weight = np.zeros((num_envs,), dtype=np.float64)
 
         H_a = cfg.history.num_actor_history
         H_c = cfg.history.num_critic_history
@@ -684,8 +715,6 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         state.info["last_actions"] = state.info.get("current_actions", np.zeros_like(actions))
         state.info["current_actions"] = actions.copy()
 
-        self._base_controller.step(actions[:, 0:3])
-
         arm_action = (
             state.info["last_actions"][:, 3:9]
             if self._cfg.control_config.simulate_action_latency
@@ -721,6 +750,16 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             1.0,
         )
 
+        # Base↔arm capture handoff: as the arm engages (arm_weight → 1) the base
+        # command fades to zero (base_weight = 1 - arm_weight), so the base stops
+        # dragging the EE out of the hold region once the goal is inside capture.
+        # Smooth complement (no hard switch at capture_outer → no discontinuity).
+        base_weight = 1.0 - arm_weight
+        self._base_controller.step(actions[:, 0:3] * base_weight[:, None])
+        state.info["arm_weight"] = arm_weight
+        state.info["base_weight"] = base_weight
+        self._arm_weight = arm_weight
+
         # Anti-windup on dq: once the ACTUAL joint is at the soft limit, stop
         # commanding further motion in the direction that would push it out.
         _limit_eps = 0.02
@@ -734,7 +773,15 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         ik = self._cfg.ik
         home_return_gain = getattr(self._cfg.control_config, "home_return_gain", 0.02)
         home_delta = self._default_arm_angles - q_actual
-        arm_residual = arm_action * self._cfg.control_config.arm_action_scale
+        # RL arm residual is gated by the same capture region: outside capture
+        # (arm_weight=0) the residual is zero and only validated IK + ready-hold
+        # act, so exploration cannot fight the stable IK during base approach.
+        # (Run-3 LOCAL hold regression 1.0 → 0.26 tracked the residual growing.)
+        arm_residual = (
+            arm_action
+            * self._cfg.control_config.arm_action_scale
+            * arm_weight[:, None]
+        )
         mode = getattr(ik, "controller_mode", "resolved_rate_damped")
 
         if mode == "integrated":
@@ -782,7 +829,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             arm_ctrl = np.clip(
                 q_target + arm_residual, self._arm_soft_lower, self._arm_soft_upper
             )
-        grip_ctrl = np.zeros((actions.shape[0], 1), dtype=np.float64)
+        # AG95 is not part of the reaching action space: hold a fixed opening.
+        grip_ctrl = np.full(
+            (actions.shape[0], 1),
+            float(self._cfg.control_config.gripper_hold_position),
+            dtype=np.float64,
+        )
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
@@ -918,14 +970,25 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
 
         # Held-success: EE within 10 cm continuously for >= hold_time (0.5 s)
         # → early termination + success flag, so easy episodes don't run the
-        # full 10 s harvesting distance/success reward.
+        # full 10 s.  The success rewards are EVENT-BASED (first entry + hold):
+        # a policy can no longer farm a per-step success bonus by crossing the
+        # 10 cm boundary over and over.
         ee_dist = np.linalg.norm(ee_pos_world - self.world_ee_goal, axis=1)
         within_10cm = ee_dist < 0.10
+        within_05cm = ee_dist < 0.05
+        new_once_10 = within_10cm & ~self._success_once
+        self._success_once |= within_10cm
+        new_once_05 = within_05cm & ~self._success_once_05
+        self._success_once_05 |= within_05cm
         hold_steps = max(1, int(0.5 / self._cfg.ctrl_dt))
         self._success_hold_timer = np.where(within_10cm, self._success_hold_timer + 1, 0)
-        self._success_once |= within_10cm
         newly_held = self._success_hold_timer >= hold_steps
         self._success_hold |= newly_held
+        # First-entry / hold event masks consumed by the event-based reward
+        # terms (these are NOT multiplied by ctrl_dt in _compute_reward).
+        state.info["event_success_once_10"] = new_once_10
+        state.info["event_success_once_05"] = new_once_05
+        state.info["event_success_hold"] = newly_held
         # Record steps-to-first-success for eval
         first_success = self._success_once & (self._steps_to_success == 0)
         self._steps_to_success = np.where(
@@ -1093,8 +1156,9 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             "ee_distance": _reward_ee_distance,
             "ee_distance_l2": _reward_ee_distance_l2,
             "ee_progress": _reward_ee_progress,
-            "success_10cm": _reward_success_10cm,
-            "success_05cm": _reward_success_05cm,
+            "success_once_10cm": _reward_success_once_10,
+            "success_once_05cm": _reward_success_once_05,
+            "success_hold_10cm": _reward_success_hold_10cm,
             "base_vel_xy": _reward_base_vel_xy,
             "base_stop_near_goal": _reward_base_stop_near,
             "base_vel_yaw": _reward_base_vel_yaw,
@@ -1108,15 +1172,26 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
             "arm_base_collision": _arm_base_collision_fn,
         }
 
+    # Event-based reward names: these are one-shot bonuses / terminal bonuses and
+    # must NOT be scaled by ctrl_dt (a 5.0 terminal bonus must stay 5.0, not 0.1).
+    _EVENT_REWARD_NAMES = frozenset({"success_once_10cm", "success_once_05cm", "success_hold_10cm"})
+
     def _compute_reward(self, ctx: _RewardContext) -> np.ndarray:
         scales = self._reward_cfg.scales
-        reward = np.zeros(ctx.num_envs, dtype=np.float64)
+        continuous = np.zeros(ctx.num_envs, dtype=np.float64)
+        events = np.zeros(ctx.num_envs, dtype=np.float64)
         for name, fn in self._reward_fns.items():
             scale = scales.get(name, 0.0)
             if abs(scale) < 1e-15:
                 continue
-            reward = reward + scale * fn(ctx)
-        return np.asarray(reward * self._cfg.ctrl_dt, dtype=get_global_dtype())
+            term = scale * fn(ctx)
+            if name in self._EVENT_REWARD_NAMES:
+                events = events + term
+            else:
+                continuous = continuous + term
+        # Continuous reward rates are integrated over the control step; event
+        # bonuses are already per-event amounts and stay unscaled.
+        return np.asarray(continuous * self._cfg.ctrl_dt + events, dtype=get_global_dtype())
 
     # ── Helpers ─────────────────────────────────────────────────────
 
@@ -1204,11 +1279,12 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         ci = float(getattr(goal_cfg, "capture_inner", 0.18))
         co = float(getattr(goal_cfg, "capture_outer", 0.25))
         aw = np.clip((co - d) / max(co - ci, 1e-6), 0.0, 1.0)
+        bw = 1.0 - aw
         out = []
         for i in range(self._num_envs):
             gtype = "LOC" if self._goal_is_local[i] else "EXT"
             flag = "SUCCESS" if self._success_once[i] else "run"
-            out.append(f"env{i} {gtype} d={d[i]:.2f} aw={aw[i]:.2f} {flag}")
+            out.append(f"env{i} {gtype} d={d[i]:.2f} bw={bw[i]:.2f} aw={aw[i]:.2f} {flag}")
         return out
 
     def reset_ee_goals(self, env_ids: np.ndarray) -> None:

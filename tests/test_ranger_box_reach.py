@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -267,13 +269,19 @@ class TestRangerBoxReachEnv:
     def test_reset_goals_local_extended_radial(self, env4):
         from unilab.envs.common.rotation import np_quat_apply_batched
 
-        env4.reset(np.arange(4))
+        # With only 4 envs, a 30 % local-fraction reset can (by chance) draw all
+        # extended (~24 %); resample until mixed so the radial invariants below
+        # are exercised for BOTH goal types.
+        for _ in range(40):
+            env4.reset(np.arange(4))
+            loc = env4._goal_is_local
+            if 0.0 < loc.mean() < 1.0:
+                break
         ee_local, _ = env4.get_ee_local_pose()
         ee_world = env4.armbase_pos_world + np_quat_apply_batched(
             env4.armbase_quat_world, ee_local
         )
         d = np.linalg.norm(ee_world - env4.world_ee_goal, axis=1)
-        loc = env4._goal_is_local
         assert 0.0 < loc.mean() < 1.0  # mixed local/extended
         cfg = env4._cfg.goal_ee
         assert np.all(d[loc] >= cfg.local_radius_range[0] - 1e-3)
@@ -288,7 +296,10 @@ class TestRangerBoxReachEnv:
         # The arm-engagement gate ramps arm_weight on the EE-to-goal distance:
         # LOCAL goals (within capture_inner) → fully engaged; EXTENDED goals
         # (beyond capture_outer) → disengaged (held at the ready pose).
-        env4.reset(np.arange(4))
+        for _ in range(40):  # resample until BOTH goal types are present (4 envs)
+            env4.reset(np.arange(4))
+            if env4._goal_is_local.any() and (~env4._goal_is_local).any():
+                break
         cfg = env4._cfg.goal_ee
         ee_local, _ = env4.get_ee_local_pose()
         gl = env4._world_goal_to_armbase(
@@ -304,6 +315,111 @@ class TestRangerBoxReachEnv:
         assert loc.any() and (~loc).any()  # mixed local/extended at reset
         assert np.all(aw[loc] > 0.99)  # local goals fully engaged
         assert np.all(aw[~loc] < 0.01)  # extended goals disengaged
+
+    def test_base_arm_capture_complementary_weights(self, env4):
+        """base_weight = 1 - arm_weight: smooth handoff, no hard switch at capture."""
+        env4.reset(np.arange(4))
+        cfg = env4._cfg.goal_ee
+        ci = cfg.capture_inner
+        co = cfg.capture_outer
+        ee_local, _ = env4.get_ee_local_pose()
+        gl = env4._world_goal_to_armbase(
+            env4.world_ee_goal, env4.armbase_pos_world, env4.armbase_quat_world
+        )
+        ee_error = np.linalg.norm(gl - ee_local, axis=1)
+        aw = np.clip((co - ee_error) / max(co - ci, 1e-6), 0.0, 1.0)
+        bw = 1.0 - aw
+        far = ee_error >= co
+        near = ee_error <= ci
+        if far.any():
+            assert np.all(aw[far] == 0.0) and np.all(bw[far] == 1.0)
+        if near.any():
+            assert np.all(aw[near] == 1.0) and np.all(bw[near] == 0.0)
+        # complement everywhere (smooth blend in the transition band)
+        assert np.allclose(aw + bw, 1.0)
+
+    def test_capture_handoff_suppresses_base_inside_capture(self, env4):
+        """LOCAL goal (inside capture_inner): random base action is suppressed."""
+        for _ in range(40):
+            # init_state() first: env.reset() rebuilds physics but leaves
+            # self._state None, so the FIRST step would otherwise call
+            # init_state() → extra reset → goal resampled → LOCAL lost.
+            env4.init_state()
+            env4.reset(np.arange(4))
+            loc = env4._goal_is_local
+            if loc.any():
+                break
+        assert loc.any()
+        env4.set_autoreset(False)
+        rng = np.random.default_rng(0)
+        act = np.zeros((4, 9))
+        act[:, 0:3] = rng.uniform(-1.0, 1.0, size=(4, 3))  # random base, zero arm
+        base_start = env4._backend.get_base_pos()[:, :2].copy()
+        for _ in range(30):
+            env4.step(act)
+        base_disp = np.linalg.norm(
+            env4._backend.get_base_pos()[:, :2] - base_start, axis=1
+        )
+        # LOCAL goals sit inside capture_inner → arm_weight≈1 → base_weight≈0
+        assert np.max(base_disp[loc]) < 0.05, f"local base moved {base_disp[loc].max():.3f}m"
+
+    def test_extended_goal_blend_weights(self, env4):
+        """EXT goal handoff (Task 19-B): far → bw≈1 base free; near → aw≈1."""
+        cfg = env4._cfg.goal_ee
+        ci, co = cfg.capture_inner, cfg.capture_outer
+        for ee_error in (0.30, 0.22, co, (ci + co) / 2.0, ci, 0.12):
+            aw = float(np.clip((co - ee_error) / max(co - ci, 1e-6), 0.0, 1.0))
+            bw = 1.0 - aw
+            assert np.allclose(aw + bw, 1.0)
+            if ee_error >= co:
+                assert aw == 0.0 and bw == 1.0
+            elif ee_error <= ci:
+                assert aw == 1.0 and bw == 0.0
+            else:
+                assert 0.0 < aw < 1.0 and 0.0 < bw < 1.0
+
+    def test_held_success_terminates_with_terminal_bonus(self):
+        """Task 19-C: hold 0.5 s fires the terminal event AND terminates that env.
+
+        Uses a Hydra-composed env (mujoco.yaml IK settings) because the registry
+        ``make`` fixture builds with dataclass IK defaults (gain 1.0) that are
+        measurably slower than the training config (gain 1.5) — the pure-IK
+        convergence this test depends on needs the real task config.
+        """
+        from hydra import compose, initialize_config_dir
+
+        from unilab.training import BackendAdapter, create_env, ensure_registries
+
+        ensure_registries()
+        with initialize_config_dir(
+            version_base="1.3", config_dir=str(Path(__file__).parent.parent / "conf" / "ppo")
+        ):
+            cfg = compose(
+                config_name="config",
+                overrides=["task=ranger_box_reach/mujoco", "algo.num_envs=4"],
+            )
+        root = Path(__file__).parent.parent
+        env_cfg_override = BackendAdapter(cfg, root_dir=root).build_task_env_cfg_override()
+        env = create_env(cfg, num_envs=4, env_cfg_override=env_cfg_override)
+
+        try:
+            for _ in range(60):
+                env.init_state()
+                env.reset(np.arange(4))
+                if env._goal_is_local.any():
+                    break
+            assert env._goal_is_local.any()  # LOCAL goal → pure IK reaches & holds
+            env.set_autoreset(False)
+            for _ in range(120):
+                st = env.step(np.zeros((4, 9)))
+                ev = st.info.get("event_success_hold", np.zeros(4, dtype=bool))
+                if np.any(ev):
+                    idx = np.flatnonzero(ev)
+                    assert np.all(st.terminated[idx]), "hold event envs must terminate"
+                    return
+            assert False, "a LOCAL env never reached held success (pure IK, zero action)"
+        finally:
+            env.close()
 
     def test_armbase_ee_goal_nonzero_after_reset(self, env4):
         env4.reset(np.arange(4))

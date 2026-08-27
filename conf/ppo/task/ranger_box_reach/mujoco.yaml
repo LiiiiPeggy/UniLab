@@ -26,11 +26,18 @@ algo:
 
 reward:
   scales:
-    ee_distance: 3.0
+    # ee_distance was a positive per-step bonus near the goal: a policy could
+    # hover around the target and farm it without ever holding success.  Zeroed
+    # in Run 4A; progress + the negative L2 penalty reward approaching, while
+    # the event bonuses below reward actual completion.
+    ee_distance: 0.0
     ee_distance_l2: -0.5
     ee_progress: 5.0
-    success_10cm: 2.0
-    success_05cm: 1.0
+    # Event-based (unscaled by ctrl_dt): fire once per episode on first entry,
+    # plus a terminal bonus on the step held-success is achieved.
+    success_once_10cm: 2.0
+    success_once_05cm: 1.0
+    success_hold_10cm: 5.0
     base_vel_xy: -0.01
     base_stop_near_goal: -0.10
     base_vel_z: 0.0
@@ -69,6 +76,7 @@ env:
     arm_kd: [3.5, 3.8, 2.5, 1.5, 1.5, 1.5]
     gripper_kp: 50.0
     gripper_kd: 5.0
+    gripper_hold_position: 0.0
   noise_config:
     level: 0.0
     scale_linvel: 0.1

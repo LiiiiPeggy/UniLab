@@ -315,6 +315,13 @@ def render_frame_job(args):
             cam.lookat = [center_x, center_y, 0.75]
         else:
             cam.lookat = [float(cam_lookat[0]), float(cam_lookat[1]), float(cam_lookat[2])]
+        # Auto-fit the FREE-camera distance to the env grid when not explicitly
+        # given, so a wide render_spacing (e.g. 10-12 m for a 4-env grid) keeps
+        # every robot in frame.  An explicit cam_distance always wins.
+        if cam_distance is None or float(cam_distance) <= 0.0:
+            cam_distance = compute_grid_camera_distance(
+                offsets, elevation_deg=float(cam_elevation)
+            )
         cam.distance = cam_distance
         cam.elevation = cam_elevation
         cam.azimuth = cam_azimuth
@@ -443,6 +450,49 @@ def _add_one_sphere(scene, pos, size, rgba, eye3, offsets, global_i):
 # default 45°).  Projection is the standard pinhole with that basis.
 
 _FOVY_DEG = 45.0
+
+
+def compute_grid_camera_distance(
+    offsets,
+    *,
+    fov_y_deg=_FOVY_DEG,
+    elevation_deg=-20.0,
+    margin=1.5,
+    aspect=1280.0 / 720.0,
+):
+    """Auto-fit a FREE-camera distance so the whole env grid stays in frame.
+
+    Fits the grid's XY diagonal (plus ``margin``) inside the horizontal FOV at
+    the given elevation.  The camera looks down from ``elevation_deg``, so its
+    horizontal distance to the grid centre is ``dist * cos(elevation)``; we also
+    require the vertical FOV to cover the same half-span (with margin) so the
+    near and far grid edges are not clipped.  A caller-provided ``cam_distance``
+    overrides this value entirely.
+
+    Args:
+        offsets: (num_envs, 2) grid offsets.
+        fov_y_deg: vertical field of view (matches the MuJoCo renderer).
+        elevation_deg: FREE-camera elevation (negative = above lookat).
+        margin: extra world-space clearance around the grid diagonal.
+        aspect: render width / height, used to derive the horizontal FOV.
+
+    Returns:
+        Camera distance from the lookat point (metres).
+    """
+    if offsets is None or len(offsets) <= 1:
+        span = 2.0
+    else:
+        sx = float(np.max(offsets[:, 0]) - np.min(offsets[:, 0]))
+        sy = float(np.max(offsets[:, 1]) - np.min(offsets[:, 1]))
+        span = max(1.0, math.hypot(sx, sy))
+    fov_x = 2.0 * math.atan(math.tan(math.radians(fov_y_deg) / 2.0) * aspect)
+    half = 0.5 * span + margin
+    elev = math.radians(elevation_deg)
+    # Horizontal-FOV fit, de-risked for the near-edge occlusion at this elevation.
+    dist_h = half / (math.cos(elev) * math.tan(fov_x / 2.0))
+    # Vertical-FOV fit: the grid plane (at lookat height) must fit the half-FOV.
+    dist_v = half / math.tan(math.radians(fov_y_deg) / 2.0)
+    return float(max(dist_h, dist_v))
 
 
 def _camera_basis_free(cam):
