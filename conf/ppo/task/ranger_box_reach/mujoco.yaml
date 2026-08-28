@@ -2,13 +2,16 @@
 training:
   task_name: RangerBoxReach
   sim_backend: mujoco
-  # Playback defaults: 2x4 grid (8 envs, 4 columns), cells spaced 6 m.
-  # cam_azimuth=0 views ACROSS the columns (camera on the −x side): all four
-  # columns line up horizontally with uniform robot size; azimuth=90 looks
-  # down the long grid axis (near column huge/clipped, far column tiny).
-  play_env_num: 8
+  # Playback defaults: 3x4 grid (12 envs, 4 columns fixed — rows =
+  # ceil(12/4)=3), cells spaced 4 m.  cam_azimuth=0 views ACROSS the columns
+  # (camera on the −x side): all four columns line up horizontally with
+  # uniform robot size; azimuth=90 looks down the long grid axis (near column
+  # huge/clipped, far column tiny).  Auto-fit camera pads the projected bounds
+  # by cam_fit_margin (global default 0.75 m) so all 12 robots stay fully in
+  # frame with a tight ~5% edge margin.
+  play_env_num: 12
   render_grid_cols: 4
-  render_spacing: 6.0
+  render_spacing: 4.0
   cam_azimuth: 0.0
 
 algo:

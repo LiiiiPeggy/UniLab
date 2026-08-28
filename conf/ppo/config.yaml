@@ -85,6 +85,10 @@ training:
   # cam_distance=null → auto-fit to the env grid (see render_many.
   # compute_grid_camera_distance); an explicit value overrides the auto-fit.
   cam_distance: null
+  # Auto-fit safety pad (world metres) added to the projected grid bounds.
+  # 0.75 m ≈ 5% of a 16:9 half-frame at the fitted distance — keeps content
+  # fully visible without the large blank bands a looser pad produces.
+  cam_fit_margin: 0.75
   cam_elevation: -20.0
   cam_azimuth: 90.0
   cam_lookat: null

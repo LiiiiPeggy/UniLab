@@ -192,6 +192,35 @@ def init_worker(model_path, shape):
     atexit.register(_close_worker)
 
 
+def _resolve_cam_distance(
+    cam_distance,
+    *,
+    offsets,
+    elevation_deg,
+    azimuth_deg,
+    aspect,
+    fit_margin=None,
+):
+    """Explicit ``cam_distance`` wins; otherwise auto-fit the grid bounds.
+
+    ``fit_margin`` (world metres of projected-bounds safety pad) threads the
+    configured ``training.cam_fit_margin`` into the auto-fit; ``None`` keeps
+    the library default.
+    """
+    if cam_distance is None or float(cam_distance) <= 0.0:
+        kwargs = {}
+        if fit_margin is not None:
+            kwargs["margin"] = float(fit_margin)
+        return compute_grid_camera_distance(
+            offsets,
+            elevation_deg=float(elevation_deg),
+            azimuth_deg=float(azimuth_deg),
+            aspect=float(aspect),
+            **kwargs,
+        )
+    return float(cam_distance)
+
+
 def render_frame_job(args):
     """
     Worker function to render a single frame.
@@ -210,6 +239,7 @@ def render_frame_job(args):
         marker_positions,
         text_overlays,
         viewport,
+        cam_fit_margin,
     ) = args
     width, height = viewport
 
@@ -326,13 +356,14 @@ def render_frame_job(args):
         # Auto-fit the FREE-camera distance via projected-bounds of the real
         # grid occupancy when not explicitly given.  An explicit cam_distance
         # always wins.
-        if cam_distance is None or float(cam_distance) <= 0.0:
-            cam_distance = compute_grid_camera_distance(
-                offsets,
-                elevation_deg=float(cam_elevation),
-                azimuth_deg=float(cam_azimuth),
-                aspect=float(width) / float(height),
-            )
+        cam_distance = _resolve_cam_distance(
+            cam_distance,
+            offsets=offsets,
+            elevation_deg=cam_elevation,
+            azimuth_deg=cam_azimuth,
+            aspect=float(width) / float(height),
+            fit_margin=cam_fit_margin,
+        )
         cam.distance = cam_distance
         cam.elevation = cam_elevation
         cam.azimuth = cam_azimuth
@@ -620,6 +651,7 @@ def render_states_get_frames(
     grid_cols=None,
     marker_positions_list=None,
     text_overlays_list=None,
+    cam_fit_margin=None,
 ):
     """
     Render a list of physics states and return the list of frames.
@@ -639,6 +671,8 @@ def render_states_get_frames(
         grid_cols: Fixed grid column count (rows = ceil(n/cols)); None = near-square.
         marker_positions_list: Optional list of (num_envs, 3+) arrays for overlay spheres.
         text_overlays_list: Optional list of per-env debug strings (one list per frame).
+        cam_fit_margin: Auto-fit safety pad (world m) added to the projected grid
+            bounds; None keeps the compute_grid_camera_distance default.
     Returns:
         List of numpy arrays (H, W, 3) (RGB)
     """
@@ -669,6 +703,7 @@ def render_states_get_frames(
             m,
             t,
             viewport,
+            cam_fit_margin,
         )
         for s, m, t in zip(
             state_list,
