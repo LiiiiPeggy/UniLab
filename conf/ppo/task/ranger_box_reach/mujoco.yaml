@@ -3,15 +3,17 @@ training:
   task_name: RangerBoxReach
   sim_backend: mujoco
   # Playback defaults: 3x4 grid (12 envs, 4 columns fixed — rows =
-  # ceil(12/4)=3), cells spaced 4 m.  cam_azimuth=0 views ACROSS the columns
+  # ceil(12/4)=3), cells spaced 3 m.  cam_azimuth=0 views ACROSS the columns
   # (camera on the −x side): all four columns line up horizontally with
   # uniform robot size; azimuth=90 looks down the long grid axis (near column
-  # huge/clipped, far column tiny).  Auto-fit camera pads the projected bounds
-  # by cam_fit_margin (global default 0.75 m) so all 12 robots stay fully in
-  # frame with a tight ~5% edge margin.
+  # huge/clipped, far column tiny).  cam_distance=11.0 is an EXPLICIT override
+  # that beats auto-fit (verified: all 12 robots + markers/trails/text fit the
+  # frame at 3 m spacing); set cam_distance=null to return to the projected-
+  # bounds auto-fit (cam_fit_margin 0.75 m, ≈11.5 m at 3 m spacing).
   play_env_num: 12
   render_grid_cols: 4
-  render_spacing: 4.0
+  render_spacing: 3.0
+  cam_distance: 11.0
   cam_azimuth: 0.0
 
 algo:

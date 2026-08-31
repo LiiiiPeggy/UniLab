@@ -386,6 +386,7 @@ def test_render_spacing_12env_text_projection_rows_separated():
     sx = np.asarray([s[0] for s in screen])
     # envs 8..11 must project to the SAME screen row (same sy).
     assert np.ptp(sy[8:12]) < 5.0, f"third-row text scattered: {sy[8:12]}"
+
     # envs within a row spread strictly along columns — monotonic in screen x
     # (az=0 mirrors columns, so the direction may be reversed, never scrambled).
     def _monotonic(v):
@@ -399,3 +400,81 @@ def test_render_spacing_12env_text_projection_rows_separated():
     # Whole block stays inside the frame.
     assert sx.min() >= 0 and sx.max() <= _WIDTH
     assert sy.min() >= 0 and sy.max() <= _HEIGHT
+
+
+# ── 3 m spacing + explicit cam_distance=11 (current ranger playback default) ──
+
+_GRID_12_SPACING_3 = 3.0
+
+
+def _offsets_12_sp3():
+    return get_grid_offsets(12, spacing=_GRID_12_SPACING_3, grid_cols=_GRID_12_COLS)
+
+
+def _cam_11(offsets):
+    import mujoco
+
+    cam = mujoco.MjvCamera()
+    cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    cam.lookat = [float(np.mean(offsets[:, 0])), float(np.mean(offsets[:, 1])), 0.75]
+    cam.distance = 11.0
+    cam.elevation = _GRID_12_EL
+    cam.azimuth = _GRID_12_AZ
+    return cam
+
+
+def test_grid_offsets_12env_spacing_three():
+    """12 envs, 4 cols, 3 m spacing -> rows 0/3/6, cols 0/3/6/9 (span 6x9 m)."""
+    offsets = _offsets_12_sp3()
+    rows = sorted(set(np.round(offsets[:, 0], 6)))
+    cols = sorted(set(np.round(offsets[:, 1], 6)))
+    assert rows == [0.0, 3.0, 6.0]
+    assert cols == [0.0, 3.0, 6.0, 9.0]
+    assert cols[-1] - cols[0] == pytest.approx(9.0)  # horizontal span
+    assert rows[-1] - rows[0] == pytest.approx(6.0)  # vertical span
+
+
+def test_render_spacing_12env_explicit_cam_11_all_in_frame():
+    """At explicit cam_distance=11 all 12 cells + occupancy + markers fit the frame."""
+    offsets = _offsets_12_sp3()
+    cam = _cam_11(offsets)
+    assert cam.distance == pytest.approx(11.0)
+    pts = list(_grid_corners(offsets))
+    for i in range(12):
+        pts.append([offsets[i, 0], offsets[i, 1], 0.0])
+        pts.append([offsets[i, 0], offsets[i, 1], 1.15])
+        # marker/trail reach (EXTENDED goals up to 0.7 m from EE).
+        for dx, dy in ((-0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7)):
+            pts.append([offsets[i, 0] + dx, offsets[i, 1] + dy, 0.5])
+        pts.append([offsets[i, 0], offsets[i, 1], 0.5 + 0.45])  # debug text
+    screen = _project_points(cam, np.asarray(pts, dtype=np.float64), _WIDTH, _HEIGHT)
+    assert all(s is not None for s in screen), "some 3m/11m points behind camera"
+    sx = np.asarray([s[0] for s in screen])
+    sy = np.asarray([s[1] for s in screen])
+    assert sx.min() >= 0 and sx.max() <= _WIDTH, f"x out: {sx.min():.0f}..{sx.max():.0f}"
+    assert sy.min() >= 0 and sy.max() <= _HEIGHT, f"y out: {sy.min():.0f}..{sy.max():.0f}"
+    # Corner envs specifically stay clear of the edge.
+    for i in (0, 3, 8, 11):
+        for z in (0.0, 0.6, 1.15):
+            s = _project_points(
+                cam, np.array([[offsets[i, 0], offsets[i, 1], z]]), _WIDTH, _HEIGHT
+            )[0]
+            assert s is not None and 0 <= s[0] <= _WIDTH and 0 <= s[1] <= _HEIGHT
+
+
+def test_render_spacing_explicit_cam_11_beats_autofit():
+    """Explicit cam_distance=11 is used verbatim, not the ~11.5 m auto-fit at 3 m."""
+    offsets = _offsets_12_sp3()
+    auto = compute_grid_camera_distance(
+        offsets, elevation_deg=_GRID_12_EL, azimuth_deg=_GRID_12_AZ, margin=0.75
+    )
+    assert auto == pytest.approx(11.46, abs=0.1)
+    cam = _cam_11(offsets)
+    assert cam.distance == pytest.approx(11.0)
+    assert cam.distance != pytest.approx(auto)
+    # cam_fit_margin no longer affects the distance when cam_distance is set.
+    cam2 = _cam_11(offsets)
+    cam2.distance = compute_grid_camera_distance(
+        offsets, elevation_deg=_GRID_12_EL, azimuth_deg=_GRID_12_AZ, margin=1.5
+    )
+    assert cam.distance == pytest.approx(11.0)  # untouched by margin changes
