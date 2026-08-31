@@ -33,6 +33,10 @@ Available demos: `teaser`, `dance`, `wallflip`, `boxtracking`, `locomani`, `inha
 
 For mainland China users, set `HF_ENDPOINT=https://hf-mirror.com` before running demos that download checkpoints.
 
+## Manual Log Output
+
+手动 stdout/stderr 重定向日志必须写入 `logs/manual/`（如 `> logs/manual/xxx.log 2>&1`）；**禁止**在仓库根目录或仓库外目录（如 `~/locomani/`）生成 `.log` 文件。正式训练/评估产出仍由各 run 目录收集（`logs/rsl_rl_ppo/<Task>/<timestamp>/`），不走手动重定向。
+
 ## Architecture
 
 UniLab is a **multi-backend, multi-algorithm** RL training infrastructure. It supports PPO-family (RSL-RL, MLX, APPO, HIM, HORA) and off-policy (SAC, TD3, FlashSAC) algorithms across MuJoCo and Motrix physics backends.
