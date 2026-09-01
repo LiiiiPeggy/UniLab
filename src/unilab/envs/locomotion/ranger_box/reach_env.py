@@ -43,6 +43,10 @@ from unilab.envs.locomotion.go2_arm.manip_loco import (
     InitState,
 )
 from unilab.envs.locomotion.ranger_box.base_velocity_controller import BaseVelocityController
+from unilab.envs.locomotion.ranger_box.ranger_command_adapter import (
+    RangerCommandAdapter,
+    RangerCommandAdapterConfig,
+)
 
 _RAW_OBS_DIM = 39
 
@@ -182,6 +186,15 @@ class BaseVelocityControllerConfig:
     enable_latency: bool = True
     enable_noise: bool = True
     enable_wheel_visualization: bool = True
+    # Optional jerk limiter (da/dt bound) applied after the acceleration clip.
+    # Default off — pure ablation knob; zero max_*_jerk disables a channel.
+    enable_jerk_limit: bool = False
+    max_lin_jerk: float = 0.0  # m/s^3
+    max_ang_jerk: float = 0.0  # rad/s^3
+    # When set, wheel visualization follows the Ranger motion mode
+    # (Ackermann/Parallel/Spin) from RangerCommandAdapter instead of the
+    # generic per-wheel swerve IK.
+    mode_wheel_visualization: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -346,6 +359,9 @@ class RangerBoxReachCfg(Go2ArmBaseCfg):
     base_velocity_controller: BaseVelocityControllerConfig = field(
         default_factory=BaseVelocityControllerConfig
     )
+    # Hardware-compatible base command shaping (deadband/mode/vy-gate) that
+    # mirrors the real AgileX Ranger /cmd_vel semantics.  Enabled via YAML.
+    command_adapter: RangerCommandAdapterConfig = field(default_factory=RangerCommandAdapterConfig)
     asset: RangerBoxAsset = field(default_factory=RangerBoxAsset)
 
 
@@ -512,6 +528,7 @@ class RangerBoxReachDRProvider(LocomotionDRProvider):
         env._success_hold[env_ids] = False
         env._steps_to_success[env_ids] = 0
         env._base_controller.reset(env_ids, np.random.default_rng())
+        env._base_command_adapter.reset(env_ids)
         return plan
 
     def _compute_reset_obs(
@@ -603,6 +620,9 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         self._base_controller = BaseVelocityController(
             cfg.base_velocity_controller, cfg.ctrl_dt, backend, cfg.asset, num_envs
         )
+        # Hardware-compatible command shaping (deadband/mode).  When disabled
+        # the raw policy action goes straight to the controller (Run-4B path).
+        self._base_command_adapter = RangerCommandAdapter(cfg.command_adapter, num_envs)
 
         self.world_ee_goal = np.zeros((num_envs, 3), dtype=np.float64)
         self.armbase_ee_goal = np.zeros((num_envs, 3), dtype=np.float64)
@@ -759,9 +779,23 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         # dragging the EE out of the hold region once the goal is inside capture.
         # Smooth complement (no hard switch at capture_outer → no discontinuity).
         base_weight = 1.0 - arm_weight
-        self._base_controller.step(actions[:, 0:3] * base_weight[:, None])
+        base_action = actions[:, 0:3] * base_weight[:, None]
+        if self._base_command_adapter.enabled:
+            # Hardware-compatible command shaping: scale the policy action to
+            # velocity units, apply deadband/hysteresis + motion mode + vy gate.
+            lin_scale = float(self._cfg.base_velocity_controller.action_scale_lin)
+            ang_scale = float(self._cfg.base_velocity_controller.action_scale_ang)
+            v_cmd = base_action.astype(np.float64).copy()
+            v_cmd[:, 0:2] *= lin_scale
+            v_cmd[:, 2] *= ang_scale
+            v_cmd, base_mode = self._base_command_adapter.process(v_cmd)
+            self._base_controller.step_from_velocity(v_cmd)
+        else:
+            base_mode = None
+            self._base_controller.step(base_action)
         state.info["arm_weight"] = arm_weight
         state.info["base_weight"] = base_weight
+        state.info["base_command_mode"] = base_mode
         self._arm_weight = arm_weight
 
         # Anti-windup on dq: once the ACTUAL joint is at the soft limit, stop
@@ -836,7 +870,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         ctrl = np.concatenate([arm_ctrl, grip_ctrl], axis=1)
 
         # Apply base velocity BEFORE physics step so MuJoCo integrates from it
-        self._base_controller.apply_velocity()
+        self._base_controller.apply_velocity(mode=base_mode)
 
         return ctrl.astype(get_global_dtype())
 

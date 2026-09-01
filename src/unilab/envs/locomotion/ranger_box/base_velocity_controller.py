@@ -86,6 +86,8 @@ class BaseVelocityController:
         self.latency_steps = np.zeros(num_envs, dtype=np.int32)
         self.latency_write_ptr = np.zeros(num_envs, dtype=np.int32)
         self._prev_steer = np.zeros((num_envs, 4), dtype=np.float64)
+        # Optional jerk limiter state (acceleration derivative bound).
+        self._prev_accel = np.zeros((num_envs, 3), dtype=np.float64)
 
         # Cache initial base z height for SE(2) planar lock
         init_qpos = backend.get_keyframe_qpos("home")
@@ -107,22 +109,36 @@ class BaseVelocityController:
         self.latency_ring[:, env_ids, :] = 0.0
         self.v_real[env_ids] = 0.0
         self._prev_steer[env_ids] = 0.0
+        self._prev_accel[env_ids] = 0.0
 
     def step(self, action_base_vel: np.ndarray) -> None:
-        """Compute v_real from policy action (steps 1-7).
-        Does NOT write to backend — apply_velocity() does that.
+        """Advance from a raw policy action in [-1, 1] (steps 1-7).
 
         Args:
             action_base_vel: ``(N, 3)`` — policy output in [-1, 1].
         """
-        N = self._num_envs
         cfg = self._cfg
-        dt = self._dt
-
-        # --- 1. Scale ---
         v_cmd = action_base_vel.astype(np.float64).copy()
         v_cmd[:, 0:2] *= cfg.action_scale_lin
         v_cmd[:, 2] *= cfg.action_scale_ang
+        self._advance(v_cmd)
+
+    def step_from_velocity(self, v_cmd: np.ndarray) -> None:
+        """Advance from an already velocity-unit command (RangerCommandAdapter).
+
+        The command-shaping adapter (deadband/mode) produces a velocity in
+        m/s·rad/s, so the internal action-scale step is skipped.
+
+        Args:
+            v_cmd: ``(N, 3)`` — base velocity command ``[vx, vy, wz]``.
+        """
+        self._advance(np.asarray(v_cmd, dtype=np.float64).copy())
+
+    def _advance(self, v_cmd: np.ndarray) -> None:
+        """Shared velocity-shaping pipeline (steps 2-7)."""
+        N = self._num_envs
+        cfg = self._cfg
+        dt = self._dt
 
         # --- 2. Clip ---
         v_cmd[:, 0:2] = np.clip(v_cmd[:, 0:2], -cfg.max_lin_vel, cfg.max_lin_vel)
@@ -141,6 +157,11 @@ class BaseVelocityController:
         dv = v_cmd - self.v_real
         dv[:, 0:2] = np.clip(dv[:, 0:2], -cfg.max_lin_acc * dt, cfg.max_lin_acc * dt)
         dv[:, 2] = np.clip(dv[:, 2], -cfg.max_ang_acc * dt, cfg.max_ang_acc * dt)
+
+        # --- 4b. Optional jerk limit (da/dt bound) — after the accel clip ---
+        if getattr(cfg, "enable_jerk_limit", False):
+            dv = self._apply_jerk_limit(dv, dt)
+
         v_target = self.v_real + dv
 
         # --- 5. First-order response (filtered state, NO noise) ---
@@ -161,9 +182,30 @@ class BaseVelocityController:
         # Store execution velocity for world-frame conversion
         self._v_exec = v_exec
 
-    def apply_velocity(self) -> None:
-        """Write v_exec to backend via set_root_planar_velocity + wheel IK.
+    def _apply_jerk_limit(self, dv: np.ndarray, dt: float) -> np.ndarray:
+        """Bound the change in acceleration (da/dt) between control steps.
+
+        ``jerk = dv/dt`` is the current acceleration; the limiter keeps
+        ``|a_new - a_prev| <= max_jerk * dt`` so the command cannot jerk
+        between steps.  Zero ``max_*_jerk`` disables that channel.
+        """
+        cfg = self._cfg
+        jerk = np.array([cfg.max_lin_jerk, cfg.max_lin_jerk, cfg.max_ang_jerk], dtype=np.float64)
+        if np.all(jerk <= 0.0):
+            return dv
+        a_new = dv / dt
+        a_prev = self._prev_accel
+        a_lim = a_prev + np.clip(a_new - a_prev, -jerk[None, :] * dt, jerk[None, :] * dt)
+        self._prev_accel[:] = a_lim
+        return a_lim * dt
+
+    def apply_velocity(self, mode: np.ndarray | None = None) -> None:
+        """Write v_exec to backend via set_root_planar_velocity + wheel viz.
         Called BEFORE physics step (in apply_action).
+
+        Args:
+            mode: ``(N,)`` motion mode from ``RangerCommandAdapter`` (``MODE_*``),
+                or ``None`` for the legacy per-wheel swerve wheel IK.
         """
         N = self._num_envs
         cfg = self._cfg
@@ -171,12 +213,23 @@ class BaseVelocityController:
 
         # --- 8. Wheel visualization (before world-frame conversion) ---
         if cfg.enable_wheel_visualization:
-            steer, omega = _compute_wheel_ik(
-                v_apply,
-                self._asset.wheel_positions,
-                self._asset.wheel_radius,
-                prev_steer=self._prev_steer,
-            )
+            if mode is not None and getattr(cfg, "mode_wheel_visualization", False):
+                from .ranger_command_adapter import ranger_wheel_visualization
+
+                steer, omega = ranger_wheel_visualization(
+                    v_apply,
+                    mode,
+                    self._asset.wheel_positions,
+                    self._asset.wheel_radius,
+                    self._prev_steer,
+                )
+            else:
+                steer, omega = _compute_wheel_ik(
+                    v_apply,
+                    self._asset.wheel_positions,
+                    self._asset.wheel_radius,
+                    prev_steer=self._prev_steer,
+                )
             self._prev_steer[:] = steer
             self._backend.set_joint_qpos(list(self._asset.steering_joint_names), steer)
             self._backend.set_joint_qvel(list(self._asset.wheel_joint_names), omega)

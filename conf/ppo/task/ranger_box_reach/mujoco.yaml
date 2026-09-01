@@ -136,7 +136,11 @@ env:
     init_ee_cart: [0.30, 0.0, 0.30]
   base_velocity_controller:
     max_lin_vel: 1.5
-    max_ang_vel: 1.0
+    # max_ang_vel 1.0 -> 0.78: the real AgileX Ranger max yaw rate is ~0.785
+    # rad/s (hardware sheet); keeping 1.0 lets the policy rely on a spin rate
+    # the real base cannot deliver (sim2real gap).  max_lin_vel stays within
+    # the hardware limit (1.5 <= 1.5 m/s).
+    max_ang_vel: 0.78
     action_scale_lin: 1.5
     action_scale_ang: 1.0
     tau: 0.05
@@ -147,6 +151,38 @@ env:
     enable_latency: false
     enable_noise: false
     enable_wheel_visualization: false
+    # Optional jerk limiter (da/dt bound).  Default OFF — ablation knob only;
+    # zero max_*_jerk disables a channel.  Kept off so Run-4B behaviour is
+    # unchanged unless explicitly enabled.
+    enable_jerk_limit: false
+    max_lin_jerk: 0.0
+    max_ang_jerk: 0.0
+    # When true, wheel visualization follows the Ranger motion mode
+    # (Ackermann/Parallel/Spin) instead of the generic per-wheel swerve IK.
+    mode_wheel_visualization: true
+  # Hardware-compatible base command shaping (deadband/hysteresis + motion
+  # mode), mirroring the real AgileX Ranger /cmd_vel semantics in ranger_base_node.
+  # All thresholds are velocity units (m/s, rad/s).
+  command_adapter:
+    enable: true
+    # Deadband/hysteresis (Schmitt trigger): channel ON once |v| > *_enter,
+    # OFF once |v| < *_exit (enter > exit); holds between them.
+    linear_deadband_enter: 0.05
+    linear_deadband_exit: 0.03
+    lateral_deadband_enter: 0.05
+    lateral_deadband_exit: 0.03
+    angular_deadband_enter: 0.05
+    angular_deadband_exit: 0.03
+    # vy is the real base's parallel-mode trigger: |vy| >= this -> PARALLEL
+    # (vx+vy+wz passed); |vy| < this -> ACKERMAN with vy forced to 0.
+    parallel_vy_threshold: 0.05
+    # SPIN recognised when yaw dominates and translation is negligible.
+    spin_angular_threshold: 0.10
+    spin_linear_threshold: 0.05
+    # Velocity limits (must match base_velocity_controller above).
+    max_lin_vel: 1.5
+    max_ang_vel: 0.78
+    mode_wheel_visualization: true
   domain_rand:
     randomize_kp: false
     kp_multiplier_range: [0.9, 1.1]

@@ -29,6 +29,7 @@ import glob
 import json
 import sys
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -76,13 +77,19 @@ CLEAN_OVERRIDES = [
 ]
 
 
-def _build_env(num_envs: int, arm_action_scale: float | None = None):
+def _build_env(
+    num_envs: int,
+    arm_action_scale: float | None = None,
+    config_overrides: Sequence[str] | None = None,
+):
     ensure_registries()
     overrides = list(CLEAN_OVERRIDES)
     if arm_action_scale is not None:
         # Match the training-time controller scale (deterministic eval must not
         # reintroduce an arm residual the policy was trained without).
         overrides.append(f"env.control_config.arm_action_scale={arm_action_scale}")
+    if config_overrides:
+        overrides.extend(config_overrides)
     with initialize_config_dir(version_base="1.3", config_dir=CONF_DIR):
         cfg = compose(
             config_name="config",
@@ -422,10 +429,22 @@ def main() -> None:
         help="Override env.control_config.arm_action_scale to match the "
         "training contract (e.g. 0.0 when the run trained without residual).",
     )
+    ap.add_argument(
+        "--config-override",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Extra Hydra override appended to the env compose "
+        "(repeatable), e.g. --config-override env.command_adapter.enable=false.",
+    )
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    env, cfg = _build_env(args.num_envs, arm_action_scale=args.arm_action_scale)
+    env, cfg = _build_env(
+        args.num_envs,
+        arm_action_scale=args.arm_action_scale,
+        config_overrides=args.config_override,
+    )
     env.set_autoreset(False)
     capture_inner = float(getattr(env._cfg.goal_ee, "capture_inner", 0.15))
     capture_outer = float(getattr(env._cfg.goal_ee, "capture_outer", 0.20))
