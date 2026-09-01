@@ -71,9 +71,16 @@ class RangerCommandAdapterConfig:
     lateral_deadband_exit: float = 0.03  # vy OFF threshold (m/s)
     angular_deadband_enter: float = 0.05  # wz ON threshold  (rad/s)
     angular_deadband_exit: float = 0.03  # wz OFF threshold (rad/s)
-    # vy is the parallel-mode trigger on the real base: |vy| >= this enters
-    # PARALLEL, |vy| < this runs ACKERMAN with vy forced to 0.
-    parallel_vy_threshold: float = 0.05
+    # PARALLEL/ACKERMAN boundary with hysteresis (Schmitt trigger) so a vy
+    # hovering at the threshold (0.049/0.051/...) does not churn modes.  The
+    # real Ranger also switches motion mode with hysteresis / dwell.
+    #   from ACKERMAN (or fresh): enter PARALLEL once |vy| > parallel_enter_vy
+    #   from PARALLEL          : leave (to ACKERMAN) once |vy| < parallel_exit_vy
+    parallel_enter_vy: float = 0.08  # m/s
+    parallel_exit_vy: float = 0.03  # m/s
+    # Minimum dwell time in a mode before another ACKERMAN<->PARALLEL switch is
+    # allowed (seconds).  Keeps the base from fast mode toggling.
+    min_mode_duration: float = 0.2  # seconds
     # SPIN is recognised when yaw dominates and the translation is negligible.
     spin_angular_threshold: float = 0.10  # |wz| >= this
     spin_linear_threshold: float = 0.05  # and hypot(vx, vy) < this
@@ -92,12 +99,18 @@ class RangerCommandAdapter:
     Vectorized over ``(N, 3)``; keeps per-env hysteresis / mode state.
     """
 
-    def __init__(self, cfg: RangerCommandAdapterConfig, num_envs: int):
+    def __init__(self, cfg: RangerCommandAdapterConfig, dt: float, num_envs: int):
         self._cfg = cfg
+        self._dt = float(dt)
         self._num_envs = num_envs
         # Schmitt-trigger state per (env, channel) — [vx, vy, wz].
         self._active = np.zeros((num_envs, 3), dtype=bool)
         self._mode = np.full(num_envs, MODE_STOP, dtype=np.int64)
+        # Steps the current mode has been held (min-mode-duration gate).
+        self._mode_dwell = np.zeros(num_envs, dtype=np.int32)
+        self._min_mode_steps = (
+            int(round(float(cfg.min_mode_duration) / self._dt)) if self._dt > 0 else 0
+        )
         # Last output (for diagnostics / benchmark reads; no behavioural role).
         self.last_output = np.zeros((num_envs, 3), dtype=np.float64)
         self.last_mode = np.full(num_envs, MODE_STOP, dtype=np.int64)
@@ -113,6 +126,7 @@ class RangerCommandAdapter:
     def reset(self, env_ids: np.ndarray) -> None:
         self._active[env_ids] = False
         self._mode[env_ids] = MODE_STOP
+        self._mode_dwell[env_ids] = 0
 
     def process(self, v_cmd: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Apply deadband/hysteresis + mode + vy-zero + clip.
@@ -154,18 +168,41 @@ class RangerCommandAdapter:
         # 0.04 m/s active command must stay a real Ackermann move, not STOP).
         speed_xy = np.hypot(v[:, 0], v[:, 1])
         abs_wz = np.abs(v[:, 2])
-        stopped = (np.abs(v[:, 0]) < 1e-9) & (np.abs(v[:, 1]) < 1e-9) & (abs_wz < 1e-9)
+        abs_vy = np.abs(v[:, 1])
+        stopped = (np.abs(v[:, 0]) < 1e-9) & (abs_vy < 1e-9) & (abs_wz < 1e-9)
         spin = (
             (~stopped)
             & (abs_wz >= cfg.spin_angular_threshold)
             & (speed_xy < cfg.spin_linear_threshold)
         )
-        parallel = (~stopped) & (~spin) & (np.abs(v[:, 1]) >= cfg.parallel_vy_threshold)
-        mode = np.where(
+
+        # PARALLEL/ACKERMAN hysteresis (Schmitt trigger): from PARALLEL we only
+        # leave once |vy| < parallel_exit_vy; otherwise (ACKERMAN / fresh) we
+        # enter PARALLEL only once |vy| > parallel_enter_vy.
+        prev = self._mode
+        in_parallel = prev == MODE_PARALLEL
+        want_parallel = np.where(
+            in_parallel, abs_vy >= cfg.parallel_exit_vy, abs_vy > cfg.parallel_enter_vy
+        )
+        want_parallel &= ~stopped & ~spin
+
+        desired = np.where(
             stopped,
             MODE_STOP,
-            np.where(spin, MODE_SPIN, np.where(parallel, MODE_PARALLEL, MODE_ACKERMAN)),
+            np.where(spin, MODE_SPIN, np.where(want_parallel, MODE_PARALLEL, MODE_ACKERMAN)),
         )
+
+        # Minimum mode duration: only block ACKERMAN<->PARALLEL switches while
+        # the dwell is too short; STOP/SPIN entry stays immediate (responsive).
+        in_ap = (prev == MODE_ACKERMAN) | (prev == MODE_PARALLEL)
+        want_ap = (desired == MODE_ACKERMAN) | (desired == MODE_PARALLEL)
+        dwell_ok = self._mode_dwell >= self._min_mode_steps
+        blocked = in_ap & want_ap & (desired != prev) & ~dwell_ok
+        mode = np.where(blocked, prev, desired)
+
+        # Update dwell: reset on any mode change, otherwise increment.
+        changed = mode != prev
+        self._mode_dwell = np.where(changed, 0, self._mode_dwell + 1)
         self._mode[:] = mode
 
         # 3. ACKERMAN: the real base only delivers this when linear.y ~ 0, so

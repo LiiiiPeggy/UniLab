@@ -25,8 +25,11 @@ _WHEEL_POS = ((0.445, -0.28), (0.445, 0.28), (-0.445, 0.28), (-0.445, -0.28))
 _WHEEL_R = 0.152
 
 
+_DT = 0.02
+
+
 def _make(cfg: RangerCommandAdapterConfig | None = None, n: int = 4) -> RangerCommandAdapter:
-    ad = RangerCommandAdapter(cfg or RangerCommandAdapterConfig(), n)
+    ad = RangerCommandAdapter(cfg or RangerCommandAdapterConfig(), _DT, n)
     ad.reset(np.arange(n))
     return ad
 
@@ -202,3 +205,52 @@ def test_controller_step_from_velocity_and_jerk_limit():
     # max_lin_acc*dt = 1.5*0.02 = 0.03; jerk limits the accel change, so the
     # one-step velocity change stays bounded by the accel clip.
     assert max_dv <= 0.03 + 1e-9
+
+
+def test_mode_hysteresis_ackerman_parallel():
+    """PARALLEL entry uses enter threshold; exit uses a lower exit threshold."""
+    # min_mode_duration=0 isolates the Schmitt trigger from the dwell gate.
+    ad = _make(cfg=RangerCommandAdapterConfig(min_mode_duration=0.0), n=1)
+    # Fresh: |vy|=0.05 is below enter(0.08) -> ACKERMAN (vy zeroed).
+    _, m = ad.process(np.array([[0.5, 0.05, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_ACKERMAN
+    # |vy|=0.09 above enter -> PARALLEL.
+    _, m = ad.process(np.array([[0.5, 0.09, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_PARALLEL
+    # |vy|=0.05 between exit(0.03) and enter(0.08), currently PARALLEL -> hold.
+    _, m = ad.process(np.array([[0.5, 0.05, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_PARALLEL
+    # |vy|=0.02 below exit -> ACKERMAN.
+    _, m = ad.process(np.array([[0.5, 0.02, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_ACKERMAN
+
+
+def test_mode_min_duration_blocks_churn():
+    """With min_mode_duration, vy oscillating across the exit does not churn."""
+    cfg = RangerCommandAdapterConfig(min_mode_duration=0.2)  # dt 0.02 -> 10 steps
+    ad = _make(cfg, n=1)
+    modes = []
+    # Drive into PARALLEL first.
+    _, m = ad.process(np.array([[0.5, 0.09, 0.0]], dtype=np.float64))
+    modes.append(int(m[0]))
+    # Alternate |vy| 0.09 (enter side) and 0.02 (below exit) — dwell blocks the
+    # rapid PARALLEL->ACKERMAN->PARALLEL churn.
+    for _ in range(20):
+        vy = 0.09 if _ % 2 == 0 else 0.02
+        _, m = ad.process(np.array([[0.5, vy, 0.0]], dtype=np.float64))
+        modes.append(int(m[0]))
+    switches = sum(a != b for a, b in zip(modes, modes[1:]))
+    # After the first PARALLEL entry, dwell prevents leaving on the 0.02 dips
+    # (10-step min), so at most a couple of switches happen after the dips
+    # accumulate enough dwell.  Assert far fewer than 20 alternating switches.
+    assert switches < 6, f"mode churn not suppressed: {switches} switches in {modes}"
+
+
+def test_mode_min_duration_zero_allows_immediate():
+    """min_mode_duration=0 keeps the legacy instant-switch behaviour."""
+    cfg = RangerCommandAdapterConfig(min_mode_duration=0.0)
+    ad = _make(cfg, n=1)
+    _, m = ad.process(np.array([[0.5, 0.09, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_PARALLEL
+    _, m = ad.process(np.array([[0.5, 0.02, 0.0]], dtype=np.float64))
+    assert m[0] == MODE_ACKERMAN  # instant switch back

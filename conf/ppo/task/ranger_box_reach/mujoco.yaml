@@ -173,9 +173,14 @@ env:
     lateral_deadband_exit: 0.03
     angular_deadband_enter: 0.05
     angular_deadband_exit: 0.03
-    # vy is the real base's parallel-mode trigger: |vy| >= this -> PARALLEL
-    # (vx+vy+wz passed); |vy| < this -> ACKERMAN with vy forced to 0.
-    parallel_vy_threshold: 0.05
+    # PARALLEL/ACKERMAN boundary with hysteresis (Schmitt) so a vy hovering at
+    # the threshold (0.049/0.051/...) does not churn modes: from ACKERMAN enter
+    # PARALLEL once |vy| > parallel_enter_vy; from PARALLEL leave once |vy| <
+    # parallel_exit_vy.  In ACKERMAN, vy is forced to 0 (real base rejects it).
+    parallel_enter_vy: 0.08
+    parallel_exit_vy: 0.03
+    # Minimum dwell in a mode before an ACKERMAN<->PARALLEL switch is allowed.
+    min_mode_duration: 0.2
     # SPIN recognised when yaw dominates and translation is negligible.
     spin_angular_threshold: 0.10
     spin_linear_threshold: 0.05

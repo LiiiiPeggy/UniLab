@@ -622,7 +622,7 @@ class RangerBoxReachEnv(Go2ArmBaseEnv):
         )
         # Hardware-compatible command shaping (deadband/mode).  When disabled
         # the raw policy action goes straight to the controller (Run-4B path).
-        self._base_command_adapter = RangerCommandAdapter(cfg.command_adapter, num_envs)
+        self._base_command_adapter = RangerCommandAdapter(cfg.command_adapter, cfg.ctrl_dt, num_envs)
 
         self.world_ee_goal = np.zeros((num_envs, 3), dtype=np.float64)
         self.armbase_ee_goal = np.zeros((num_envs, 3), dtype=np.float64)

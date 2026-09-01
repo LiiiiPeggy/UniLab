@@ -146,6 +146,8 @@ def _new_episode(env, i: int, d0: float, base_xy: np.ndarray) -> dict:
         "act_rate": 0.0,
         "prev_act": None,
         "steps": 0,
+        "mode_switch": 0,
+        "prev_mode": None,
         "done_reason": "timeout",
     }
 
@@ -234,6 +236,20 @@ def run_checkpoint(
                     )
                     finished.append(ep)
                     eps[i] = None
+            # Base motion-mode switch count (adapter publishes per-env mode).
+            # The rsl_rl wrapper only forwards time_outs in infos, so read the
+            # env state.info directly.
+            bm = getattr(env.state, "info", {}).get("base_command_mode", None)
+            if bm is not None:
+                bm_np = np.asarray(bm)
+                for i in range(num_envs):
+                    ep = eps[i]
+                    if ep is None:
+                        continue
+                    m_i = int(bm_np[i])
+                    if ep["prev_mode"] is not None and m_i != ep["prev_mode"]:
+                        ep["mode_switch"] += 1
+                    ep["prev_mode"] = m_i
             if all(e is None for e in eps):
                 break
 
@@ -287,6 +303,7 @@ def _finalize_ep(ep: dict, capture_inner: float, capture_outer: float) -> dict:
         "arm_res_mean": ep["arm_res"] / steps,
         "base_act_mean": ep["base_act"] / steps,
         "act_rate_mean": ep["act_rate"] / max(ep["steps"] - 1, 1),
+        "mode_switching_freq": ep["mode_switch"] / max(ep["steps"] - 1, 1),
         "done_reason": ep["done_reason"],
     }
 
@@ -353,6 +370,7 @@ def _agg(rows: list[dict]) -> dict:
         "joint_limit_rate": rate("jl"),
         "actuator_sat_per_step": m("sat") / max(m("n_steps"), 1.0),
         "episode_len_mean": m("n_steps"),
+        "mode_switching_freq": m("mode_switching_freq"),
         "done_reasons": reasons,
     }
 
