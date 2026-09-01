@@ -42,10 +42,53 @@ root-velocity（freejoint），真机用轮速+转向经底盘动力学。
 | 项 | 仿真 (`RangerCommandAdapter`) | 真机 (`ranger_base_node`) | 契约 |
 |---|---|---|---|
 | `linear.x` / `vx` | deadband enter 0.05 / exit 0.03 m/s | 节点内近零停轮 | 一致 |
-| `linear.y` / `vy` | `|vy| >= 0.05` → PARALLEL；否则 ACKERMAN 且 **vy=0** | `linear.y != 0` → Parallel mode | 一致 |
+| `linear.y` / `vy` | `|vy| > 0.08` 进入 PARALLEL；`|vy| < 0.03` 离开；中间保持（Schmitt） | `linear.y != 0` → Parallel mode | 一致 |
 | `angular.z` / `wz` | deadband enter 0.05 / exit 0.03 rad/s；SPIN 判定 | 原地旋转模式 | 一致 |
 | 速度上限 | `max_lin_vel=1.5`, `max_ang_vel=0.78` | 硬件限制（≈0.785 rad/s 最大转速） | 一致 |
-| mode | STOP / ACKERMAN / PARALLEL / SPIN | Ackermann / Parallel / Spin | 一致 |
+| mode | STOP / ACKERMAN / PARALLEL / SPIN（含 min_mode_duration 防抖） | Ackermann / Parallel / Spin | 一致 |
+
+## 2b. Command state machine
+
+```
+PPO output (raw action)
+  │  scale to velocity
+  ▼
+RangerCommandAdapter
+  ├─ deadband/hysteresis（vx/vy/wz）
+  ├─ mode 判定 + mode 级 hysteresis（Schmitt）+ min_mode_duration 防抖
+  └─ vy gate（ACKERMAN 时 vy=0） + velocity clip
+  ▼
+        ┌──────────────┐
+        │     STOP     │  ← 三通道均 deadband 归零
+        └──────┬───────┘
+               │ 有命令
+               ▼
+        ┌──────────────┐   |wz|≥0.10 且 |v_xy|<0.05
+        │     SPIN     │ ←─────────────────────────┐
+        └──────┬───────┘                           │
+               │ 非旋转                            │
+               ▼                                   │
+        ┌──────────────┐   |vy| > 0.08 (enter)     │
+        │   ACKERMAN   │ ──────────────────────────┘
+        │  (vy forced  │
+        │   to 0)      │
+        └──────┬───────┘
+               │  |vy| < 0.03 (exit)
+               ▼
+        ┌──────────────┐
+        │   PARALLEL   │   (vx + vy + wz 全通过)
+        └──────────────┘
+```
+
+切换规则：
+- **ACKERMAN ↔ PARALLEL**：Schmitt 触发（enter 0.08 / exit 0.03），且受
+  `min_mode_duration`（0.2 s）约束——避免 vy 在阈值附近抖动造成频繁切换。
+- **STOP/SPIN** 进入即时（响应快），不参与 dwell。
+
+**必须与真机保持一致（部署契约）**：`parallel_enter_vy` / `parallel_exit_vy`、
+`min_mode_duration`、`spin_angular/linear_threshold`、deadband enter/exit、
+`max_lin_vel` / `max_ang_vel`。这些参数在仿真 adapter 与真机 base_node 中
+取值一致，策略部署后行为才不会漂移。
 
 ## 3. 残留差异（已知，非本批范围）
 
