@@ -40,6 +40,37 @@
 - **配置拥有的任务：** Hydra owner YAML 会同时选择 task、reward、backend 和 algorithm；后端切换通过 `task=<task>/<backend>` 表达。
 - **跨平台安装路径：** 仓库覆盖 Linux CUDA、Linux ROCm、Linux XPU，以及 Apple Silicon / macOS 的安装流程。
 
+## 🤖 RangerBoxReach — 移动机械臂 reaching（ranger 分支）
+
+AgileX Ranger 四轮底盘 + Dobot CR10 六轴机械臂 + AG95 夹爪的 EE reaching
+任务（MuJoCo，PPO / RSL-RL）。SE(2) 锁定的 kinematic 底盘把目标导航进机械臂
+**实测**的捕获区（`capture_inner/outer` 0.15/0.20 m），再由经过验证的
+resolved-rate IK 闭合最后几厘米。目标混合 LOCAL（3D radial 0.10–0.15 m，
+IK 可行性过滤）与 EXTENDED（planar `r_xy ∈ [0.30, 0.70]` m、`|dz| ≤ 0.10` m）。
+
+```bash
+# 训练 / 确定性分 ckpt 评测 / 回放视频
+uv run train --algo ppo --task ranger_box_reach --sim mujoco
+uv run eval --algo ppo --task ranger_box_reach --sim mujoco \
+    --load-run 2026-08-27_20-59-29_mujoco        # 有效 Run 4B
+```
+
+Run 4B（300 iters、`arm_action_scale=0.0`、planar EXTENDED sampler）Stage-A
+确定性评测（n=208）：LOCAL hold ≈ 1.000、EXT capture-entry = 1.000、
+EXT hold ≈ 0.99、collision / joint-limit = 0。
+
+**硬件兼容的底盘命令接口** — PPO base action 经 `RangerCommandAdapter` 处理，
+复现真机 AgileX Ranger `/cmd_vel` 语义：逐通道 deadband + hysteresis、
+运动模式（STOP / ACKERMAN / PARALLEL / SPIN，含 Schmitt + 最小驻留）、
+PARALLEL 之外 vy 置 0、以及匹配硬件的速度上限（`max_lin_vel` 1.5 m/s、
+`max_ang_vel` 0.78 rad/s）。仿真与部署端 ROS Twist 路径共享完全一致的
+命令语义（见 [`docs/ranger_sim2real_interface.md`](docs/ranger_sim2real_interface.md)）。
+
+分支开发记录：[`PROCESS.md`](PROCESS.md)（算法 / 控制 / 物理问题与 do-nots）、
+[`debug.md`](debug.md)（训练记录）、
+[`docs/ranger_base_control_review.md`](docs/ranger_base_control_review.md)、
+[`docs/ranger_command_pipeline_review.md`](docs/ranger_command_pipeline_review.md)。
+
 ## 🚀 快速演示
 
 <table>

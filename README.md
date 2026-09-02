@@ -40,6 +40,40 @@ Start with the `Quick Demo` below to run the primary training command. The recom
 - **Config-owned tasks:** Hydra owner YAML files select task, reward, backend, and algorithm settings together; backend switching is expressed as `task=<task>/<backend>`.
 - **Cross-platform setup paths:** The repository tracks Linux CUDA, Linux ROCm, Linux XPU, and Apple Silicon / macOS setup flows.
 
+## 🤖 RangerBoxReach — mobile manipulation reaching (ranger branch)
+
+AgileX Ranger 4-wheel base + Dobot CR10 6-DOF arm + AG95 gripper EE-reaching
+task in MuJoCo (PPO / RSL-RL). The SE(2)-locked kinematic base navigates the
+goal into the arm's *measured* capture region (`capture_inner/outer` 0.15/0.20
+m), and a validated resolved-rate IK closes the last centimetres. Goals mix
+LOCAL (3D radial 0.10–0.15 m, IK-feasibility filtered) and EXTENDED (planar
+`r_xy ∈ [0.30, 0.70]` m, `|dz| ≤ 0.10` m).
+
+```bash
+# Train / deterministic per-checkpoint eval / playback video
+uv run train --algo ppo --task ranger_box_reach --sim mujoco
+uv run eval --algo ppo --task ranger_box_reach --sim mujoco \
+    --load-run 2026-08-27_20-59-29_mujoco        # valid Run 4B
+```
+
+Run 4B (300 iters, `arm_action_scale=0.0`, planar EXTENDED sampler) Stage-A
+deterministic eval (n=208): LOCAL hold ≈ 1.000, EXT capture-entry = 1.000,
+EXT hold ≈ 0.99, collisions / joint-limit = 0.
+
+**Hardware-compatible base command interface** — the PPO base action passes
+through `RangerCommandAdapter`, which reproduces the real AgileX Ranger
+`/cmd_vel` semantics: per-channel deadband + hysteresis, motion mode
+(STOP / ACKERMAN / PARALLEL / SPIN) with a Schmitt trigger + minimum dwell, vy
+gated to 0 outside PARALLEL, and velocity limits matched to hardware
+(`max_lin_vel` 1.5 m/s, `max_ang_vel` 0.78 rad/s). Simulation and the deployed
+ROS Twist path share identical command semantics (see
+[`docs/ranger_sim2real_interface.md`](docs/ranger_sim2real_interface.md)).
+
+Branch development notes: [`PROCESS.md`](PROCESS.md) (algorithm / control /
+physics problems and do-nots), [`debug.md`](debug.md) (training log),
+[`docs/ranger_base_control_review.md`](docs/ranger_base_control_review.md),
+[`docs/ranger_command_pipeline_review.md`](docs/ranger_command_pipeline_review.md).
+
 ## 🚀 Quick Demo
 
 <table>
