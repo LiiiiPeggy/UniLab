@@ -24,22 +24,6 @@
 
 从下面的 `快速演示` 开始运行主训练命令。推荐使用 `uv` 安装；Conda 和 pip 用户目前也应继续遵循 `uv` 工作流。平台相关说明与当前边界见 [安装指南](https://unilabsim.github.io/UniLab-doc/zh_CN/1-getting_started/2-installation.html)。
 
-## ✨ 亮点
-
-```
-┌───────────────────┐                            ┌─────────────────────────┐
-│  CPU Physics Sim  │   Unified Shared Memory    │   GPU Policy Training   │
-│   MuJoCo/Motrix   │ ─────────────────────────▶ │     PPO / SAC / TD3     │
-│ Multithread Step  │    SharedReplayBuffer      │ CUDA / MPS / ROCm / XPU │
-└───────────────────┘                            └─────────────────────────┘
-```
-
-- **异构 RL 运行时：** CPU 并行仿真通过共享内存流式传输 transition，而策略学习运行在 GPU 加速器上。
-- **两套物理后端：** MuJoCoUni 和 MotrixSim 通过后端专用适配器和任务 owner 配置接入。
-- **统一训练 CLI：** `uv run train` 和 `uv run eval` 覆盖 PPO、MLX PPO、APPO、SAC、TD3 和 FlashSAC；额外的 HORA 与 HIM-PPO 路径以脚本级工作流文档化。
-- **配置拥有的任务：** Hydra owner YAML 会同时选择 task、reward、backend 和 algorithm；后端切换通过 `task=<task>/<backend>` 表达。
-- **跨平台安装路径：** 仓库覆盖 Linux CUDA、Linux ROCm、Linux XPU，以及 Apple Silicon / macOS 的安装流程。
-
 ## 🤖 RangerBoxReach — 移动机械臂 reaching（ranger 分支）
 
 AgileX Ranger 四轮底盘 + Dobot CR10 六轴机械臂 + AG95 夹爪的 EE reaching
@@ -70,6 +54,22 @@ PARALLEL 之外 vy 置 0、以及匹配硬件的速度上限（`max_lin_vel` 1.5
 [`debug.md`](debug.md)（训练记录）、
 [`docs/ranger_base_control_review.md`](docs/ranger_base_control_review.md)、
 [`docs/ranger_command_pipeline_review.md`](docs/ranger_command_pipeline_review.md)。
+
+## ✨ 亮点
+
+```
+┌───────────────────┐                            ┌─────────────────────────┐
+│  CPU Physics Sim  │   Unified Shared Memory    │   GPU Policy Training   │
+│   MuJoCo/Motrix   │ ─────────────────────────▶ │     PPO / SAC / TD3     │
+│ Multithread Step  │    SharedReplayBuffer      │ CUDA / MPS / ROCm / XPU │
+└───────────────────┘                            └─────────────────────────┘
+```
+
+- **异构 RL 运行时：** CPU 并行仿真通过共享内存流式传输 transition，而策略学习运行在 GPU 加速器上。
+- **两套物理后端：** MuJoCoUni 和 MotrixSim 通过后端专用适配器和任务 owner 配置接入。
+- **统一训练 CLI：** `uv run train` 和 `uv run eval` 覆盖 PPO、MLX PPO、APPO、SAC、TD3 和 FlashSAC；额外的 HORA 与 HIM-PPO 路径以脚本级工作流文档化。
+- **配置拥有的任务：** Hydra owner YAML 会同时选择 task、reward、backend 和 algorithm；后端切换通过 `task=<task>/<backend>` 表达。
+- **跨平台安装路径：** 仓库覆盖 Linux CUDA、Linux ROCm、Linux XPU，以及 Apple Silicon / macOS 的安装流程。
 
 ## 🚀 快速演示
 

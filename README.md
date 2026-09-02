@@ -24,22 +24,6 @@ A Heterogeneous Architecture for Robot RL Beyond GPU-Dominant Paradigms
 
 Start with the `Quick Demo` below to run the primary training command. The recommended setup uses `uv`; Conda and pip users should still follow the `uv` workflow for now. Platform-specific notes and current boundaries are in the [installation guide](https://unilabsim.github.io/UniLab-doc/en/1-getting_started/2-installation.html).
 
-## ✨ Highlights
-
-```
-┌───────────────────┐                            ┌─────────────────────────┐
-│  CPU Physics Sim  │   Unified Shared Memory    │   GPU Policy Training   │
-│   MuJoCo/Motrix   │ ─────────────────────────▶ │     PPO / SAC / TD3     │
-│ Multithread Step  │    SharedReplayBuffer      │ CUDA / MPS / ROCm / XPU │
-└───────────────────┘                            └─────────────────────────┘
-```
-
-- **Heterogeneous RL runtime:** CPU-parallel simulation streams transitions through shared memory while policy learning runs on GPU accelerators.
-- **Two physics backends:** MuJoCoUni and MotrixSim are integrated through backend-specific adapters and task owner configs.
-- **Unified training CLI:** `uv run train` and `uv run eval` cover PPO, MLX PPO, APPO, SAC, TD3, and FlashSAC; additional HORA and HIM-PPO paths are documented as script-level workflows.
-- **Config-owned tasks:** Hydra owner YAML files select task, reward, backend, and algorithm settings together; backend switching is expressed as `task=<task>/<backend>`.
-- **Cross-platform setup paths:** The repository tracks Linux CUDA, Linux ROCm, Linux XPU, and Apple Silicon / macOS setup flows.
-
 ## 🤖 RangerBoxReach — mobile manipulation reaching (ranger branch)
 
 AgileX Ranger 4-wheel base + Dobot CR10 6-DOF arm + AG95 gripper EE-reaching
@@ -73,6 +57,22 @@ Branch development notes: [`PROCESS.md`](PROCESS.md) (algorithm / control /
 physics problems and do-nots), [`debug.md`](debug.md) (training log),
 [`docs/ranger_base_control_review.md`](docs/ranger_base_control_review.md),
 [`docs/ranger_command_pipeline_review.md`](docs/ranger_command_pipeline_review.md).
+
+## ✨ Highlights
+
+```
+┌───────────────────┐                            ┌─────────────────────────┐
+│  CPU Physics Sim  │   Unified Shared Memory    │   GPU Policy Training   │
+│   MuJoCo/Motrix   │ ─────────────────────────▶ │     PPO / SAC / TD3     │
+│ Multithread Step  │    SharedReplayBuffer      │ CUDA / MPS / ROCm / XPU │
+└───────────────────┘                            └─────────────────────────┘
+```
+
+- **Heterogeneous RL runtime:** CPU-parallel simulation streams transitions through shared memory while policy learning runs on GPU accelerators.
+- **Two physics backends:** MuJoCoUni and MotrixSim are integrated through backend-specific adapters and task owner configs.
+- **Unified training CLI:** `uv run train` and `uv run eval` cover PPO, MLX PPO, APPO, SAC, TD3, and FlashSAC; additional HORA and HIM-PPO paths are documented as script-level workflows.
+- **Config-owned tasks:** Hydra owner YAML files select task, reward, backend, and algorithm settings together; backend switching is expressed as `task=<task>/<backend>`.
+- **Cross-platform setup paths:** The repository tracks Linux CUDA, Linux ROCm, Linux XPU, and Apple Silicon / macOS setup flows.
 
 ## 🚀 Quick Demo
 
