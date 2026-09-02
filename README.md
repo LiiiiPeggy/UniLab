@@ -74,10 +74,7 @@ PARALLEL 之外 vy 置 0、以及匹配硬件的速度上限（`max_lin_vel` 1.5
 ## 🚀 快速演示
 
 <p align="center">
-  <video controls loop muted style="width:100%;max-width:960px;border-radius:8px">
-    <source src="docs/sphinx/source/_static/demos/play_video.mp4" type="video/mp4">
-    你的浏览器不支持 video 标签。
-  </video>
+  <img src="docs/sphinx/source/_static/demos/play_video.gif" alt="RangerBoxReach 回放" width="100%" style="max-width:960px;border-radius:8px">
 </p>
 
 <p align="center"><em>RangerBoxReach 回放：12 台 Ranger+CR10 移动机械臂在 3×4 网格中执行 LOCAL/EXTENDED 抓取（Run 4B，model_299）。</em></p>

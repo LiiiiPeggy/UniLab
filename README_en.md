@@ -77,10 +77,7 @@ physics problems and do-nots), [`debug.md`](debug.md) (training log),
 ## 🚀 Quick Demo
 
 <p align="center">
-  <video controls loop muted style="width:100%;max-width:960px;border-radius:8px">
-    <source src="docs/sphinx/source/_static/demos/play_video.mp4" type="video/mp4">
-    Your browser does not support the video tag.
-  </video>
+  <img src="docs/sphinx/source/_static/demos/play_video.gif" alt="RangerBoxReach playback" width="100%" style="max-width:960px;border-radius:8px">
 </p>
 
 <p align="center"><em>RangerBoxReach playback: 12 Ranger+CR10 mobile manipulators reaching LOCAL/EXTENDED goals on a 3×4 grid (Run 4B, model_299).</em></p>
