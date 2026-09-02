@@ -76,42 +76,14 @@ physics problems and do-nots), [`debug.md`](debug.md) (training log),
 
 ## 🚀 Quick Demo
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/dance.jpg" alt="dance demo" width="100%">
-      <br>
-      <sub><b>dance</b><br>G1 motion tracking</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/wallflip.jpg" alt="wallflip demo" width="100%">
-      <br>
-      <sub><b>wallflip</b><br>G1 wall flip</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/teaser.jpg" alt="teaser demo" width="100%">
-      <br>
-      <sub><b>teaser</b><br>MotrixSim teaser</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/boxtracking.jpg" alt="boxtracking demo" width="100%">
-      <br>
-      <sub><b>boxtracking</b><br>G1 box tracking</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/inhandgrasp.jpg" alt="inhandgrasp demo" width="100%">
-      <br>
-      <sub><b>inhandgrasp</b><br>Sharpa in-hand</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/locomani.jpg" alt="locomani demo" width="100%">
-      <br>
-      <sub><b>locomani</b><br>Go2 loco-manipulation</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <video controls loop muted style="width:100%;max-width:960px;border-radius:8px">
+    <source src="docs/sphinx/source/_static/demos/play_video.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
+</p>
+
+<p align="center"><em>RangerBoxReach playback: 12 Ranger+CR10 mobile manipulators reaching LOCAL/EXTENDED goals on a 3×4 grid (Run 4B, model_299).</em></p>
 
 ```bash
 # 0. If uv is not installed

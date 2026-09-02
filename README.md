@@ -73,42 +73,14 @@ PARALLEL 之外 vy 置 0、以及匹配硬件的速度上限（`max_lin_vel` 1.5
 
 ## 🚀 快速演示
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/dance.jpg" alt="dance demo" width="100%">
-      <br>
-      <sub><b>dance</b><br>G1 动作跟踪</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/wallflip.jpg" alt="wallflip demo" width="100%">
-      <br>
-      <sub><b>wallflip</b><br>G1 空翻</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/teaser.jpg" alt="teaser demo" width="100%">
-      <br>
-      <sub><b>teaser</b><br>MotrixSim 预告图</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/boxtracking.jpg" alt="boxtracking demo" width="100%">
-      <br>
-      <sub><b>boxtracking</b><br>G1 箱体跟踪</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/inhandgrasp.jpg" alt="inhandgrasp demo" width="100%">
-      <br>
-      <sub><b>inhandgrasp</b><br>Sharpa 手内抓取</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/sphinx/source/_static/demos/locomani.jpg" alt="locomani demo" width="100%">
-      <br>
-      <sub><b>locomani</b><br>Go2 移动操作</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <video controls loop muted style="width:100%;max-width:960px;border-radius:8px">
+    <source src="docs/sphinx/source/_static/demos/play_video.mp4" type="video/mp4">
+    你的浏览器不支持 video 标签。
+  </video>
+</p>
+
+<p align="center"><em>RangerBoxReach 回放：12 台 Ranger+CR10 移动机械臂在 3×4 网格中执行 LOCAL/EXTENDED 抓取（Run 4B，model_299）。</em></p>
 
 ```bash
 # 0. 如果还没有安装 uv
